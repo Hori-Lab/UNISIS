@@ -36,7 +36,7 @@ subroutine set_ele(irep, tempk, ionstr, out_lb, out_Zp)
    lb = lb_kT / temp_kT
    Zp = length_per_charge / lb
 
-   if (temp_independent /== 0) then
+   if (temp_independent /= 0) then
       print '(a)', 'Error: temp_independnet /= 0 not implemented in _HTN_CONSISTENT (set_ele.F90)'
       flush(6)
       error stop

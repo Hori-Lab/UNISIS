@@ -52,7 +52,7 @@ subroutine force_ele_DH(irep, forces)
 
       ! -----------------------------------------------------------------
       dist1 = sqrt(dist2)
-      rdist1 = 1.0 / dist1
+      rdist1 = 1.0_PREC / dist1
 
       dvdw_dr = ele_coef(irep) * rdist1 * rdist1 &
                * (rdist1 + rcdist) * exp(-dist1 * rcdist)

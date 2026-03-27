@@ -149,7 +149,7 @@ subroutine force_bp(irep, forces)
 
       dih = atan2(dot_product(v42,n)*a12, dot_product(m,n))
       d = dih + bpp%dihd_phi1
-      u = u + bpp%dihd_k1 * (1.0 + cos(d))
+      u = u + bpp%dihd_k1 * (1.0_PREC + cos(d))
 
       pre = -bpp%dihd_k1 * sin(d) * a12
       f_i(:) = + pre / dot_product(m, m) * m(:)

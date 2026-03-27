@@ -21,13 +21,13 @@ subroutine energy_wca(irep, Ewca)
 
       imp1 = wca_mp(1, iwca, irep)
       imp2 = wca_mp(2, iwca, irep)
-      
+
       d = norm2( pbc_vec_d(xyz(:,imp1,irep), xyz(:, imp2,irep)) )
 
       if (d >= wca_sigma) cycle
 
       d = wca_sigma / d
-      e_wca = e_wca + wca_eps * (d**12 - 2 * d**6 + 1.0)
+      e_wca = e_wca + wca_eps * (d**12 - 2 * d**6 + 1.0_PREC)
 
    enddo
    !$omp end parallel do

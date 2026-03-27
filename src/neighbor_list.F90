@@ -209,7 +209,7 @@ subroutine neighbor_list(irep)
                      bp_mp(5, ibp, irep) = imp + 1
                   endif
 
-                  if (j == nmp_chain(ichain)) then
+                  if (j == nmp_chain(jchain)) then
                      bp_mp(6, ibp, irep) = jmp + 1 - nmp_chain(jchain)
                   else
                      bp_mp(6, ibp, irep) = jmp + 1

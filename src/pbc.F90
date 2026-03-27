@@ -2,6 +2,8 @@ module pbc
 
    use const, only : PREC, L_INT
 
+   implicit none
+
    logical, save :: flg_pbc
 
    ! Current box size
@@ -28,6 +30,7 @@ contains
       use const_idx, only : RSTBLK
       logical, intent(in) :: restarted
 
+      integer :: i
       integer :: rst_status
 
       print '(a)', 'Setting up the Periodic Boundary Conditon'
