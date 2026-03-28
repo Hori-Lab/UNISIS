@@ -64,6 +64,7 @@ Tests are organized into progressive levels. You choose which levels to run base
 | `regression` | Output matches stored reference data | After any code change that could affect numerics |
 | `restart` | Split run from checkpoint matches continuous run | After changing restart I/O or integrator state |
 | `sampling` | Thermodynamic averages match expected values | After changing force field or sampling algorithm |
+| `gradient` | Analytical forces match numerical energy gradients | After changing force or energy routines |
 
 Typical developer workflow:
 
@@ -71,6 +72,7 @@ Typical developer workflow:
 2. **Before committing**: `--levels run,regression --modes serial`
 3. **Before merging**: `--levels run,consistency,regression,restart`
 4. **After force field changes**: `--levels sampling`
+5. **After changing force/energy routines**: `--levels gradient --modes serial`
 
 ## Command-Line Reference
 

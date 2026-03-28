@@ -64,6 +64,7 @@ TEST_CASES = {
         "tolerances": {"atol": 1e-8, "rtol": 1e-6},
         "sampling_nstep": 100000,
         "sampling_properties": [],  # to be populated
+        "gradient_test": True,
     },
 
 }
@@ -72,4 +73,4 @@ TEST_CASES = {
 ALL_MODES = ["serial", "omp1", "ompN", "mpi", "mpi_omp"]
 
 # All valid test levels
-ALL_LEVELS = ["run", "consistency", "regression", "restart", "sampling"]
+ALL_LEVELS = ["run", "consistency", "regression", "restart", "sampling", "gradient"]

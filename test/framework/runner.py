@@ -2,6 +2,7 @@
 
 import os
 import glob
+import re
 import shutil
 
 from .utils import (
@@ -101,6 +102,12 @@ class TestRunner:
                 mode = valid_modes[0] if valid_modes else None
                 if mode:
                     self._run_sampling(case_name, case, mode)
+
+            # Level: gradient
+            if "gradient" in levels and case.get("gradient_test"):
+                mode = valid_modes[0] if valid_modes else None
+                if mode:
+                    self._run_gradient(case_name, case, mode)
 
     def _get_work_dir(self, case_name, mode, suffix=""):
         """Get or create a work directory for a test run."""
@@ -700,6 +707,65 @@ class TestRunner:
             case_name, mode, "sampling", status,
             "; ".join(details)
         ))
+
+    def _run_gradient(self, case_name, case, mode):
+        """Level 6: gradient correctness (energy-force consistency)."""
+        try:
+            self.builder.build_for_mode(mode)
+        except RuntimeError:
+            self.reporter.add(TestResult(
+                case_name, mode, "gradient", TestResult.FAIL, "build failed"))
+            return
+
+        work_dir, success = self._ensure_run(
+            case_name, case, mode,
+            suffix="gradient",
+            extra_toml_patches={"type": "CHECK_FORCE"},
+        )
+
+        if success is None:  # submitted to condor, analysis deferred
+            return
+        if not success:
+            self.reporter.add(TestResult(
+                case_name, mode, "gradient", TestResult.FAIL, "run failed"))
+            return
+
+        out_files = self._find_out_files(work_dir, case)
+        if not out_files:
+            self.reporter.add(TestResult(
+                case_name, mode, "gradient", TestResult.FAIL, "no output file"))
+            return
+
+        passed, detail = self._parse_gradient_results(out_files[0])
+        status = TestResult.PASS if passed else TestResult.FAIL
+        self.reporter.add(TestResult(case_name, mode, "gradient", status, detail))
+
+    def _parse_gradient_results(self, out_file, tolerance=0.001):
+        """Parse CHECK_FORCE output for energy-force differences.
+
+        Returns (passed: bool, detail: str).
+        """
+        pattern = re.compile(
+            r'^f_energy - f_force\s+(\d+)\s+([\d.eE+\-]+)\s+([\d.eE+\-]+)\s+([\d.eE+\-]+)')
+        n_checked = 0
+        failures = []
+        with open(out_file) as f:
+            for line in f:
+                m = pattern.match(line)
+                if m:
+                    n_checked += 1
+                    imp = int(m.group(1))
+                    diffs = [abs(float(m.group(i))) for i in (2, 3, 4)]
+                    if any(d > tolerance for d in diffs):
+                        failures.append((imp, max(diffs)))
+        if n_checked == 0:
+            return False, "no gradient check lines found in output"
+        if failures:
+            worst_imp, worst_diff = max(failures, key=lambda x: x[1])
+            return False, (
+                f"{len(failures)}/{n_checked} atoms exceed tol={tolerance} "
+                f"(worst: atom {worst_imp}, diff={worst_diff:.6f})")
+        return True, f"all {n_checked} atoms within tol={tolerance}"
 
     # ---- HTCondor batch dispatch ----
 
