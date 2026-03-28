@@ -45,11 +45,12 @@ TEST_CASES = {
     "md_simple": {
         "description": "Basic single-chain MD without PBC",
         "source_dir": "test/data",
-        "input_toml": "input_md_simple.toml",
+        "input_toml": "T2HP.toml",
         "required_files": [
-            "T2HP.pdb",
-            "unisis.ff",
+            "unisis23.ff",
             "T2HP.fasta",
+            "T2HP.db",
+            "T2HP.xyz",
         ],
         "modes": ["serial", "omp1", "ompN"],
         "mpi_ranks": 0,

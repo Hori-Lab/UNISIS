@@ -106,6 +106,25 @@ def parse_args():
         help="Print stdout/stderr from test runs",
     )
 
+    # HTCondor dispatch
+    condor_group = parser.add_argument_group("HTCondor dispatch")
+    condor_group.add_argument(
+        "--condor", action="store_true",
+        help="Submit jobs via HTCondor instead of running locally",
+    )
+    condor_group.add_argument(
+        "--condor-memory", type=int, default=4,
+        help="Memory per job in GB (default: 4)",
+    )
+    condor_group.add_argument(
+        "--condor-poll-interval", type=int, default=30,
+        help="Polling interval in seconds while waiting for jobs (default: 30)",
+    )
+    condor_group.add_argument(
+        "--condor-timeout", type=int, default=3600,
+        help="Maximum seconds to wait for all condor jobs (default: 3600)",
+    )
+
     # Reference generation and selection
     parser.add_argument(
         "--generate-reference", action="store_true",
@@ -196,6 +215,13 @@ def main():
     modes = resolve_list(args.modes, ALL_MODES)
     levels = resolve_list(args.levels, ALL_LEVELS)
 
+    # HTCondor sanity check
+    if args.condor:
+        import shutil as _shutil
+        if not _shutil.which("condor_submit"):
+            print("Error: condor_submit not found in PATH. Is HTCondor installed?")
+            sys.exit(2)
+
     # Work directory
     work_base = args.work_dir or os.path.join(script_dir, "_work")
     ensure_dir(work_base)
@@ -227,6 +253,10 @@ def main():
         keep_work=args.keep_work,
         verbose=args.verbose,
         ref_label=args.reference,
+        condor=args.condor,
+        condor_memory_gb=args.condor_memory,
+        condor_poll_interval=args.condor_poll_interval,
+        condor_timeout=args.condor_timeout,
     )
 
     if args.generate_reference:
@@ -253,7 +283,10 @@ def main():
                 sys.exit(2)
 
     # Run tests
-    runner.run_all(cases, modes, levels)
+    if args.condor:
+        runner.condor_run_all(cases, modes, levels)
+    else:
+        runner.run_all(cases, modes, levels)
 
     # Summary
     exit_code = reporter.print_summary()

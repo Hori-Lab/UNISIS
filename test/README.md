@@ -99,6 +99,68 @@ With no arguments, prints info and usage examples.
 | `--generate-reference` | | Run and save output as a new reference data set |
 | `--reference LABEL` | latest | Reference data set to compare against |
 | `--ref-description TEXT` | | Description to include in reference set metadata |
+| `--condor` | | Submit jobs via HTCondor instead of running locally |
+| `--condor-memory GB` | 4 | Memory per job in GB |
+| `--condor-poll-interval SECS` | 30 | Polling interval while waiting for jobs |
+| `--condor-timeout SECS` | 3600 | Maximum seconds to wait for all jobs |
+
+## Running Tests on HTCondor
+
+On the Pharmacy HPC cluster, you can offload simulation jobs to cluster nodes instead of running them on the login/submit machine.
+
+```bash
+# Smoke test via HTCondor (serial mode, 1 CPU, 4 GB)
+./test/run_tests.py --levels run --modes serial --serial-exe ./build/sis --condor
+
+# Regression test via HTCondor with more memory
+./test/run_tests.py --levels regression --modes serial --serial-exe ./build/sis \
+    --condor --condor-memory 8
+
+# Multiple modes in parallel — all jobs submitted at once
+./test/run_tests.py --levels run,regression --modes serial,omp1,ompN \
+    --serial-exe ./build/sis --omp-exe ./build/sis --condor
+
+# MPI test (4 CPUs requested on a single node)
+./test/run_tests.py --levels run --modes mpi --mpi-exe ./build/sis_mpi --condor
+
+# Restart test (sequential HTCondor stages)
+./test/run_tests.py --levels restart --cases md_simple --serial-exe ./build/sis --condor
+```
+
+### How it works
+
+- **Builds are always local.** Only the simulation execution is submitted to HTCondor.
+- **Batch dispatch.** For non-restart levels, all simulation jobs are submitted simultaneously and the framework waits for all of them concurrently before running analysis. This is faster than running one job at a time.
+- **Restart tests are sequential.** Each stage (full run → first half → second half from checkpoint) is submitted one at a time because each stage depends on output from the previous one.
+- **All modes use vanilla universe** (single node). CPUs requested per mode:
+
+  | Mode | CPUs requested |
+  |------|---------------|
+  | `serial`, `omp1` | 1 |
+  | `ompN` | value of `--omp-threads` (default 4) |
+  | `mpi` | value of `mpi_ranks` in test config (default 4) |
+  | `mpi_omp` | `mpi_ranks × omp-threads` |
+
+- **NFS filesystem.** No file transfer is needed; work directories on the submit node are directly visible on execute nodes.
+
+### Files written per job
+
+Each job's work directory gets three HTCondor-related files:
+
+| File | Contents |
+|------|---------|
+| `_condor_job.sh` | Shell script that sets environment variables and runs the simulation |
+| `_condor_submit` | HTCondor submit file |
+| `_condor.log` | HTCondor event log (used to detect job completion and exit code) |
+| `_condor_stdout` | Captured stdout from the job |
+| `_condor_stderr` | Captured stderr from the job |
+
+### Troubleshooting HTCondor jobs
+
+- **Jobs stay idle**: Check `condor_q -better` for hold reasons. Common causes: insufficient memory requested (`--condor-memory`), no available slots (`condor_status -avail`).
+- **Timeout**: Increase `--condor-timeout` (default 3600 s). Timed-out jobs are reported as FAIL.
+- **Job failed on cluster but not locally**: Run with `--keep-work` and inspect `_condor_stderr` in the work directory.
+- **`condor_submit not found`**: HTCondor is not in your PATH. Make sure you are on a submit node of the Pharmacy HPC cluster.
 
 ## Managing Reference Data
 
@@ -287,6 +349,7 @@ test/
     reporter.py             Color-coded pass/fail/skip reporting
     builder.py              CMake build management for 3 variants
     runner.py               Test orchestration across all levels
+    condor.py               HTCondor job submission and monitoring
   _work/                    Temporary work directories (git-ignored)
 ```
 
@@ -298,7 +361,7 @@ For each (case, mode) combination:
 2. Symlinks input files from their source locations (using relative paths).
 3. Copies and patches the TOML file: adjusts `nstep`, `prefix`, and rewrites file paths to point to local symlinks.
 4. For MPI modes, generates a wrapper script that auto-detects the MPI implementation (OpenMPI, MPICH, SLURM) for rank routing.
-5. Runs the executable with appropriate environment (`OMP_NUM_THREADS`, etc.).
+5. Runs the executable with appropriate environment (`OMP_NUM_THREADS`, etc.) — either locally via subprocess or via HTCondor if `--condor` is given.
 6. Checks results according to the requested test level.
 
 ## Troubleshooting
@@ -307,3 +370,4 @@ For each (case, mode) combination:
 - **Test fails with "non-zero exit"**: Run with `--verbose` to see stdout/stderr, or inspect files in `test/_work/<case>_<mode>/` (use `--keep-work` to preserve them).
 - **Regression fails after intentional change**: See "When to regenerate" above.
 - **MPI tests fail**: Check that `mpirun` (or your MPI launcher) is available. Set `--mpi-cmd` if using a different launcher (e.g., `srun`).
+- **HTCondor issues**: See the "Troubleshooting HTCondor jobs" subsection above.

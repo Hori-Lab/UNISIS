@@ -21,7 +21,8 @@ class TestRunner:
     def __init__(self, config, builder, reporter, repo_root,
                  work_base, omp_threads=4, mpi_cmd="mpirun",
                  timeout=300, keep_work=False, verbose=False,
-                 ref_label=None):
+                 ref_label=None, condor=False, condor_memory_gb=4,
+                 condor_poll_interval=30, condor_timeout=3600):
         self.config = config  # dict of test case configs
         self.builder = builder
         self.reporter = reporter
@@ -34,8 +35,15 @@ class TestRunner:
         self.verbose = verbose
         self.ref_label = ref_label  # None = auto-select latest
         self.run_results = {}  # (case, mode) -> work_dir for reuse
+        # HTCondor settings
+        self.condor = condor
+        self.condor_memory_gb = condor_memory_gb
+        self.condor_poll_interval = condor_poll_interval
+        self.condor_timeout = condor_timeout
+        self._condor_batch = None       # CondorBatch, set in condor_run_all
+        self._condor_batch_mode = False  # True during batch submit pass
 
-    def run_all(self, cases, modes, levels):
+    def run_all(self, cases, modes, levels, print_header=True):
         """Run all selected tests.
 
         Parameters
@@ -46,8 +54,12 @@ class TestRunner:
             Parallelization modes.
         levels : list[str]
             Test levels.
+        print_header : bool
+            Whether to print the results table header (default True).
+            Set to False when called internally to avoid duplicate headers.
         """
-        self.reporter.print_header()
+        if print_header:
+            self.reporter.print_header()
 
         for case_name in cases:
             case = self.config[case_name]
@@ -148,40 +160,52 @@ class TestRunner:
             self.run_results[key] = (work_dir, False)
             return work_dir, False
 
+        if self.condor and self._condor_batch_mode:
+            # Batch submit pass: submit to HTCondor without waiting.
+            # Store None as a pending sentinel; analysis deferred until after
+            # wait_all() updates run_results with the actual exit code.
+            self._condor_submit(case, mode, exe, work_dir,
+                                case["input_toml"], extra_args, key)
+            self.run_results[key] = (work_dir, None)
+            return work_dir, None
+
         success = self._execute(case, mode, exe, work_dir,
                                 case["input_toml"], extra_args)
         self.run_results[key] = (work_dir, success)
         return work_dir, success
 
-    def _execute(self, case, mode, exe, work_dir, input_toml, extra_args=""):
-        """Execute the simulation in the given mode.
+    def _build_exec_cmd_and_env(self, case, mode, exe, work_dir,
+                                input_toml, extra_args=""):
+        """Build the simulation command string and environment dict.
 
-        Returns True if exit code is 0.
+        Returns (cmd, env) without executing anything.
         """
         env = {}
         use_mpi = mode in ("mpi", "mpi_omp")
 
-        if mode == "serial":
+        if mode in ("serial", "omp1", "mpi"):
             env["OMP_NUM_THREADS"] = "1"
-        elif mode == "omp1":
-            env["OMP_NUM_THREADS"] = "1"
-        elif mode == "ompN":
-            env["OMP_NUM_THREADS"] = str(self.omp_threads)
-        elif mode == "mpi":
-            env["OMP_NUM_THREADS"] = "1"
-        elif mode == "mpi_omp":
+        elif mode in ("ompN", "mpi_omp"):
             env["OMP_NUM_THREADS"] = str(self.omp_threads)
 
         if use_mpi:
-            wrapper = generate_mpi_wrapper(
-                work_dir, exe, input_toml, extra_args
-            )
+            wrapper = generate_mpi_wrapper(work_dir, exe, input_toml, extra_args)
             ranks = case.get("mpi_ranks", 4)
             cmd = f"{self.mpi_cmd} -n {ranks} {wrapper}"
         else:
             cmd = f"{exe} {input_toml}"
             if extra_args:
                 cmd += f" {extra_args}"
+
+        return cmd, env
+
+    def _execute(self, case, mode, exe, work_dir, input_toml, extra_args=""):
+        """Execute the simulation locally.
+
+        Returns True if exit code is 0.
+        """
+        cmd, env = self._build_exec_cmd_and_env(
+            case, mode, exe, work_dir, input_toml, extra_args)
 
         rc, stdout, stderr, elapsed = run_command(
             cmd, cwd=work_dir, env=env, timeout=self.timeout
@@ -194,6 +218,64 @@ class TestRunner:
                 print(f"    stderr: {stderr[:500]}")
 
         return rc == 0
+
+    def _condor_submit(self, case, mode, exe, work_dir,
+                       input_toml, extra_args, key):
+        """Submit a simulation job to HTCondor (no wait).
+
+        Adds the resulting CondorJob to self._condor_batch.
+        Returns True to signal successful submission.
+        """
+        from .condor import prepare_and_submit
+        cmd, env = self._build_exec_cmd_and_env(
+            case, mode, exe, work_dir, input_toml, extra_args)
+        mpi_ranks = case.get("mpi_ranks", 4)
+        job = prepare_and_submit(
+            work_dir=work_dir,
+            case_name=key[0],
+            mode=mode,
+            cmd=cmd,
+            env_vars=env,
+            omp_threads=self.omp_threads,
+            mpi_ranks=mpi_ranks,
+            memory_gb=self.condor_memory_gb,
+            key=key,
+            verbose=self.verbose,
+        )
+        self._condor_batch.add(job)
+        return True
+
+    def _condor_submit_and_wait(self, case, mode, exe, work_dir,
+                                input_toml, extra_args="", label="job"):
+        """Submit a single job to HTCondor and block until it completes.
+
+        Used for sequential restart stages. Returns True if exit code is 0.
+        """
+        from .condor import CondorBatch, prepare_and_submit
+        key = (label, mode, work_dir)
+        cmd, env = self._build_exec_cmd_and_env(
+            case, mode, exe, work_dir, input_toml, extra_args)
+        mpi_ranks = case.get("mpi_ranks", 4)
+        job = prepare_and_submit(
+            work_dir=work_dir,
+            case_name=label,
+            mode=mode,
+            cmd=cmd,
+            env_vars=env,
+            omp_threads=self.omp_threads,
+            mpi_ranks=mpi_ranks,
+            memory_gb=self.condor_memory_gb,
+            key=key,
+            verbose=self.verbose,
+        )
+        batch = CondorBatch(
+            poll_interval=self.condor_poll_interval,
+            timeout=self.condor_timeout,
+            verbose=self.verbose,
+        )
+        batch.add(job)
+        results = batch.wait_all()
+        return results[key] == 0
 
     def _find_out_files(self, work_dir, case):
         """Find .out files in a work directory."""
@@ -223,6 +305,9 @@ class TestRunner:
         nstep = case.get("short_nstep")
         work_dir, success = self._ensure_run(case_name, case, mode,
                                              nstep_override=nstep)
+
+        if success is None:  # submitted to condor, analysis deferred
+            return
 
         if not success:
             # Check stderr for details
@@ -261,6 +346,8 @@ class TestRunner:
                 continue
             wd, ok = self._ensure_run(case_name, case, mode,
                                       nstep_override=nstep)
+            if ok is None:  # submitted to condor, analysis deferred
+                continue
             if ok:
                 work_dirs[mode] = wd
 
@@ -341,6 +428,9 @@ class TestRunner:
 
         work_dir, success = self._ensure_run(case_name, case, mode,
                                              nstep_override=nstep)
+        if success is None:  # submitted to condor, analysis deferred
+            return
+
         if not success:
             self.reporter.add(TestResult(
                 case_name, mode, "regression", TestResult.FAIL,
@@ -578,6 +668,9 @@ class TestRunner:
             case_name, case, mode, nstep_override=nstep, suffix="sampling"
         )
 
+        if success is None:  # submitted to condor, analysis deferred
+            return
+
         if not success:
             self.reporter.add(TestResult(
                 case_name, mode, "sampling", TestResult.FAIL, "run failed"
@@ -607,6 +700,246 @@ class TestRunner:
             case_name, mode, "sampling", status,
             "; ".join(details)
         ))
+
+    # ---- HTCondor batch dispatch ----
+
+    def condor_run_all(self, cases, modes, levels):
+        """Run all selected tests by submitting jobs to HTCondor in batch.
+
+        For non-restart levels: submits all jobs at once, waits for all to
+        complete concurrently, then runs analysis. Restart tests are handled
+        sequentially (each stage must finish before the next can start).
+
+        Parameters
+        ----------
+        cases : list[str]
+        modes : list[str]
+        levels : list[str]
+        """
+        from .condor import CondorBatch
+
+        non_restart_levels = [l for l in levels if l != "restart"]
+        do_restart = "restart" in levels
+
+        self._condor_batch = CondorBatch(
+            poll_interval=self.condor_poll_interval,
+            timeout=self.condor_timeout,
+            verbose=self.verbose,
+        )
+
+        if non_restart_levels:
+            # Phase 1: submit pass — _ensure_run submits jobs without waiting;
+            # _run_* methods return early after submission (no analysis yet).
+            self._condor_batch_mode = True
+            self.run_all(cases, modes, non_restart_levels, print_header=False)
+            self._condor_batch_mode = False
+
+            n_submitted = len(self._condor_batch.jobs)
+            if n_submitted == 0:
+                # Nothing to submit (e.g. all cases skipped prerequisites).
+                pass
+            else:
+                # Phase 2: wait for all submitted jobs to finish.
+                print(f"  Submitted {n_submitted} job(s) to HTCondor. "
+                      f"Waiting (poll every {self.condor_poll_interval}s)...")
+                results = self._condor_batch.wait_all()
+
+                # Phase 3: populate run_results with actual success/failure.
+                for key, exit_code in results.items():
+                    work_dir, _ = self.run_results[key]
+                    self.run_results[key] = (work_dir, exit_code == 0)
+
+            # Phase 4: analysis pass — _ensure_run returns cached results;
+            # no jobs are re-submitted or re-run.
+            self.run_all(cases, modes, non_restart_levels)
+
+        if do_restart:
+            for case_name in cases:
+                case = self.config[case_name]
+                if not case.get("restart_test"):
+                    continue
+                missing = check_prerequisites(case, self.repo_root)
+                if missing:
+                    self.reporter.add(TestResult(
+                        case_name, "---", "restart", TestResult.SKIP,
+                        f"missing: {', '.join(missing)}"
+                    ))
+                    continue
+                valid_modes = [m for m in modes if m in case["modes"]]
+                mode = valid_modes[0] if valid_modes else None
+                if mode:
+                    self._run_restart_condor(case_name, case, mode)
+
+    def _run_restart_condor(self, case_name, case, mode):
+        """Restart consistency test using sequential HTCondor job submissions.
+
+        Mirrors _run_restart() but replaces _execute() calls with
+        _condor_submit_and_wait() so each stage runs on a cluster node.
+        """
+        try:
+            self.builder.build_for_mode(mode)
+        except RuntimeError:
+            self.reporter.add(TestResult(
+                case_name, mode, "restart", TestResult.FAIL, "build failed"
+            ))
+            return
+
+        nstep = case.get("regression_nstep") or case.get("short_nstep", 100)
+        nstep_save = case.get("nstep_save", 10)
+        nstep_save_rst = case.get("nstep_save_rst", nstep // 2)
+        half = nstep // 2
+        half = (half // nstep_save) * nstep_save
+        if half < nstep_save:
+            half = nstep_save
+
+        use_mpi = mode in ("mpi", "mpi_omp")
+        n_replicas = case.get("n_replicas", 1)
+
+        exe = self.builder.get_exe(mode)
+        source_dir = os.path.join(self.repo_root, case["source_dir"])
+        src_toml = os.path.join(source_dir, case["input_toml"])
+        files_to_link = list(case.get("required_files", []))
+
+        # --- Stage 1: full continuous run ---
+        work_full = self._get_work_dir(case_name, mode, "restart_full")
+        ensure_dir(work_full)
+        setup_work_dir(work_full, case["source_dir"], files_to_link, self.repo_root)
+        dst_toml = os.path.join(work_full, case["input_toml"])
+        patch_toml(src_toml, dst_toml, {
+            "prefix": f"./{case['output_prefix']}",
+            "nstep": nstep,
+            "nstep_save": nstep_save,
+            "nstep_save_rst": nstep_save_rst,
+        })
+        localize_file_paths(dst_toml, dst_toml)
+
+        ok_full = self._condor_submit_and_wait(
+            case, mode, exe, work_full, case["input_toml"],
+            label=f"{case_name}_rst_full")
+        if not ok_full:
+            self.reporter.add(TestResult(
+                case_name, mode, "restart", TestResult.FAIL, "full run failed"
+            ))
+            return
+
+        # --- Stage 2: first half ---
+        work_s1 = self._get_work_dir(case_name, mode, "restart_s1")
+        ensure_dir(work_s1)
+        setup_work_dir(work_s1, case["source_dir"], files_to_link, self.repo_root)
+        prefix_s1 = f"{case['output_prefix']}_s1"
+        s1_toml = os.path.join(work_s1, case["input_toml"])
+        patch_toml(src_toml, s1_toml, {
+            "prefix": f"./{prefix_s1}",
+            "nstep": half,
+            "nstep_save": nstep_save,
+            "nstep_save_rst": half,
+        })
+        localize_file_paths(s1_toml, s1_toml)
+
+        ok_s1 = self._condor_submit_and_wait(
+            case, mode, exe, work_s1, case["input_toml"],
+            label=f"{case_name}_rst_s1")
+        if not ok_s1:
+            self.reporter.add(TestResult(
+                case_name, mode, "restart", TestResult.FAIL,
+                "stage 1 (first half) failed"
+            ))
+            return
+
+        # --- Find and prepare restart file ---
+        if use_mpi and n_replicas > 1:
+            rst_pattern = os.path.join(work_s1, f"{prefix_s1}_0*.rst")
+            rst_files = sorted(glob.glob(rst_pattern))
+            if not rst_files:
+                self.reporter.add(TestResult(
+                    case_name, mode, "restart", TestResult.FAIL,
+                    "no restart files from stage 1"
+                ))
+                return
+            combined_rst = os.path.join(work_s1, f"{prefix_s1}.rst")
+            with open(combined_rst, "wb") as out:
+                for rf in rst_files:
+                    with open(rf, "rb") as inp:
+                        out.write(inp.read())
+            rst_path = combined_rst
+        else:
+            rst_pattern = os.path.join(work_s1, f"{prefix_s1}*.rst")
+            rst_files = sorted(glob.glob(rst_pattern))
+            if not rst_files:
+                self.reporter.add(TestResult(
+                    case_name, mode, "restart", TestResult.FAIL,
+                    "no restart files from stage 1"
+                ))
+                return
+            rst_path = rst_files[-1]
+
+        # --- Stage 3: second half from restart ---
+        work_s2 = self._get_work_dir(case_name, mode, "restart_s2")
+        ensure_dir(work_s2)
+        setup_work_dir(work_s2, case["source_dir"], files_to_link, self.repo_root)
+
+        rst_basename = os.path.basename(rst_path)
+        rst_in_s2 = os.path.join(work_s2, rst_basename)
+        copy_file(rst_path, rst_in_s2)
+
+        prefix_s2 = f"{case['output_prefix']}_s2"
+        s2_toml = os.path.join(work_s2, case["input_toml"])
+        patch_toml(src_toml, s2_toml, {
+            "prefix": f"./{prefix_s2}",
+            "nstep": nstep,
+            "nstep_save": nstep_save,
+            "nstep_save_rst": nstep,
+        })
+        localize_file_paths(s2_toml, s2_toml)
+
+        ok_s2 = self._condor_submit_and_wait(
+            case, mode, exe, work_s2, case["input_toml"],
+            extra_args=rst_basename, label=f"{case_name}_rst_s2")
+        if not ok_s2:
+            self.reporter.add(TestResult(
+                case_name, mode, "restart", TestResult.FAIL,
+                "stage 2 (restart) failed"
+            ))
+            return
+
+        # --- Compare ---
+        full_outs = sorted(glob.glob(
+            os.path.join(work_full, f"{case['output_prefix']}*.out")
+        ))
+        s2_outs = sorted(glob.glob(
+            os.path.join(work_s2, f"{prefix_s2}*.out")
+        ))
+
+        if not full_outs or not s2_outs:
+            self.reporter.add(TestResult(
+                case_name, mode, "restart", TestResult.FAIL,
+                f"missing outputs: full={len(full_outs)}, s2={len(s2_outs)}"
+            ))
+            return
+
+        all_passed = True
+        worst_rdiff = 0.0
+
+        for f_full, f_s2 in zip(full_outs, s2_outs):
+            result = compare_out_files(
+                f_s2, f_full,
+                atol=1e-10, rtol=1e-10,
+                align_steps=True
+            )
+            worst_rdiff = max(worst_rdiff, result.max_rel_diff)
+            if not result.passed:
+                all_passed = False
+
+        if all_passed:
+            self.reporter.add(TestResult(
+                case_name, mode, "restart", TestResult.PASS,
+                f"max_rdiff={worst_rdiff:.2e}"
+            ))
+        else:
+            self.reporter.add(TestResult(
+                case_name, mode, "restart", TestResult.FAIL,
+                result.summary
+            ))
 
     def generate_reference(self, cases, mode="serial", description=""):
         """Run tests and save output as reference data set.
