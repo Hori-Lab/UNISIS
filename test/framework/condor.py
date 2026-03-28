@@ -92,6 +92,7 @@ def write_submit_file(work_dir, case_name, mode, n_cpus, memory_gb=4):
         f"log             = _condor.log\n"
         f"request_memory  = {memory_gb} GB\n"
         f"Request_CPUs    = {n_cpus}\n"
+        f"notification    = Never\n"
         f"queue\n"
     )
     with open(submit_path, "w") as f:

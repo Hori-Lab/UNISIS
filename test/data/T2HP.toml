@@ -1,0 +1,41 @@
+title = "Sinple T2HP single chain folding"
+
+[Job]
+type = "MD"
+
+[Files]
+      [Files.In]
+      ff = "unisis.ff"
+      fasta = "T2HP.fasta"
+      xyz_ini = "T2HP.xyz"
+
+      [Files.Out]
+      types = ["bp"]
+      prefix = "./md"
+
+[Condition]
+      tempK = 333.15
+      rng_seed = 1200
+
+[MD]
+integrator = "GJF-2GJ"
+dt = 0.25
+nstep = 20000000
+nstep_save = 50000
+neighbor_list_margin = 10.0
+viscosity_Pas = 0.00001
+fix_com_origin = 1
+
+[Electrostatic]
+ionic_strength = 0.1
+cutoff_type = 2
+cutoff = 20.0
+length_per_charge = 4.38178046
+
+[Basepair]
+model = 5
+min_loop = 3
+max_bp_per_nt = 1
+
+[Progress]
+step = 1000000

@@ -47,7 +47,7 @@ TEST_CASES = {
         "source_dir": "test/data",
         "input_toml": "T2HP.toml",
         "required_files": [
-            "unisis23.ff",
+            "unisis.ff",
             "T2HP.fasta",
             "T2HP.db",
             "T2HP.xyz",
@@ -57,10 +57,10 @@ TEST_CASES = {
         "output_prefix": "test_md",
         "has_replica_cols": False,
         "restart_test": True,
-        "short_nstep": 50,
-        "regression_nstep": 100,
-        "nstep_save": 10,
-        "nstep_save_rst": 50,
+        "short_nstep": 100,
+        "regression_nstep": 2000,
+        "nstep_save": 100,
+        "nstep_save_rst": 500,
         "tolerances": {"atol": 1e-8, "rtol": 1e-6},
         "sampling_nstep": 100000,
         "sampling_properties": [],  # to be populated
