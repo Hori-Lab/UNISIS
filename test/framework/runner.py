@@ -706,9 +706,9 @@ class TestRunner:
     def condor_run_all(self, cases, modes, levels):
         """Run all selected tests by submitting jobs to HTCondor in batch.
 
-        For non-restart levels: submits all jobs at once, waits for all to
-        complete concurrently, then runs analysis. Restart tests are handled
-        sequentially (each stage must finish before the next can start).
+        If a manifest from a prior --condor-submit-only exists, auto-detects
+        completed jobs and skips re-submission. Otherwise submits all jobs,
+        waits, then runs analysis.
 
         Parameters
         ----------
@@ -716,8 +716,19 @@ class TestRunner:
         modes : list[str]
         levels : list[str]
         """
-        from .condor import CondorBatch
+        from .condor import (
+            CondorBatch, MANIFEST_FILENAME, read_manifest,
+        )
 
+        manifest_path = os.path.join(self.work_base, MANIFEST_FILENAME)
+        manifest = read_manifest(manifest_path)
+
+        if manifest:
+            self._condor_collect_from_manifest(
+                manifest, manifest_path, cases, modes, levels)
+            return
+
+        # No manifest — original behaviour: submit + wait + analyze.
         non_restart_levels = [l for l in levels if l != "restart"]
         do_restart = "restart" in levels
 
@@ -728,29 +739,28 @@ class TestRunner:
         )
 
         if non_restart_levels:
-            # Phase 1: submit pass — _ensure_run submits jobs without waiting;
-            # _run_* methods return early after submission (no analysis yet).
             self._condor_batch_mode = True
             self.run_all(cases, modes, non_restart_levels, print_header=False)
             self._condor_batch_mode = False
 
             n_submitted = len(self._condor_batch.jobs)
-            if n_submitted == 0:
-                # Nothing to submit (e.g. all cases skipped prerequisites).
-                pass
-            else:
-                # Phase 2: wait for all submitted jobs to finish.
+            if n_submitted > 0:
+                # Also write manifest for crash-recovery.
+                self._write_manifest_from_batch(
+                    manifest_path, cases, modes, levels)
+
                 print(f"  Submitted {n_submitted} job(s) to HTCondor. "
                       f"Waiting (poll every {self.condor_poll_interval}s)...")
                 results = self._condor_batch.wait_all()
 
-                # Phase 3: populate run_results with actual success/failure.
                 for key, exit_code in results.items():
                     work_dir, _ = self.run_results[key]
                     self.run_results[key] = (work_dir, exit_code == 0)
 
-            # Phase 4: analysis pass — _ensure_run returns cached results;
-            # no jobs are re-submitted or re-run.
+                # Clean up manifest after successful wait.
+                if os.path.isfile(manifest_path):
+                    os.remove(manifest_path)
+
             self.run_all(cases, modes, non_restart_levels)
 
         if do_restart:
@@ -769,6 +779,355 @@ class TestRunner:
                 mode = valid_modes[0] if valid_modes else None
                 if mode:
                     self._run_restart_condor(case_name, case, mode)
+
+    def condor_submit_only(self, cases, modes, levels):
+        """Submit all jobs to HTCondor and exit immediately.
+
+        Writes a manifest file so that a subsequent --condor run can
+        collect the results without re-submitting.
+
+        Parameters
+        ----------
+        cases : list[str]
+        modes : list[str]
+        levels : list[str]
+        """
+        from .condor import CondorBatch, MANIFEST_FILENAME
+
+        non_restart_levels = [l for l in levels if l != "restart"]
+        do_restart = "restart" in levels
+
+        self._condor_batch = CondorBatch(
+            poll_interval=self.condor_poll_interval,
+            timeout=self.condor_timeout,
+            verbose=self.verbose,
+        )
+
+        # Submit non-restart jobs.
+        if non_restart_levels:
+            self._condor_batch_mode = True
+            self.run_all(cases, modes, non_restart_levels, print_header=False)
+            self._condor_batch_mode = False
+
+        # Submit restart stages full + s1 (s2 deferred to collect).
+        restart_jobs = {}
+        if do_restart:
+            restart_jobs = self._submit_restart_partial(cases, modes)
+
+        # Write manifest.
+        manifest_path = os.path.join(self.work_base, MANIFEST_FILENAME)
+        self._write_manifest_from_batch(
+            manifest_path, cases, modes, levels, restart_jobs)
+
+        n_total = len(self._condor_batch.jobs) + len(restart_jobs)
+        print(f"  Submitted {n_total} job(s). Manifest: {manifest_path}")
+        print(f"  Run with --condor (same args) to collect results.")
+
+    def _write_manifest_from_batch(self, manifest_path, cases, modes, levels,
+                                   restart_jobs=None):
+        """Build a manifest from the current _condor_batch and write it."""
+        from .condor import write_manifest, _key_to_str
+        jobs = {}
+        for job in self._condor_batch.jobs:
+            key_str = _key_to_str(job.key)
+            jobs[key_str] = {
+                "work_dir": job.work_dir,
+                "cluster_id": job.cluster_id,
+                "log_path": job.log_path,
+            }
+        write_manifest(manifest_path, cases, modes, levels,
+                       jobs, restart_jobs)
+
+    def _submit_restart_partial(self, cases, modes):
+        """Submit restart stages full + s1 (not s2) for all eligible cases.
+
+        Returns a restart_jobs dict for the manifest.
+        """
+        from .condor import prepare_and_submit, _key_to_str
+        restart_jobs = {}
+
+        for case_name in cases:
+            case = self.config[case_name]
+            if not case.get("restart_test"):
+                continue
+            missing = check_prerequisites(case, self.repo_root)
+            if missing:
+                continue
+            valid_modes = [m for m in modes if m in case["modes"]]
+            mode = valid_modes[0] if valid_modes else None
+            if not mode:
+                continue
+
+            try:
+                self.builder.build_for_mode(mode)
+            except RuntimeError:
+                continue
+
+            exe = self.builder.get_exe(mode)
+            if exe is None:
+                continue
+
+            nstep = case.get("regression_nstep") or case.get("short_nstep", 100)
+            nstep_save = case.get("nstep_save", 10)
+            nstep_save_rst = case.get("nstep_save_rst", nstep // 2)
+            half = nstep // 2
+            half = (half // nstep_save) * nstep_save
+            if half < nstep_save:
+                half = nstep_save
+
+            source_dir = os.path.join(self.repo_root, case["source_dir"])
+            src_toml = os.path.join(source_dir, case["input_toml"])
+            files_to_link = list(case.get("required_files", []))
+
+            # --- Stage full ---
+            work_full = self._get_work_dir(case_name, mode, "restart_full")
+            ensure_dir(work_full)
+            setup_work_dir(work_full, case["source_dir"],
+                           files_to_link, self.repo_root)
+            dst_toml = os.path.join(work_full, case["input_toml"])
+            patch_toml(src_toml, dst_toml, {
+                "prefix": f"./{case['output_prefix']}",
+                "nstep": nstep,
+                "nstep_save": nstep_save,
+                "nstep_save_rst": nstep_save_rst,
+            })
+            localize_file_paths(dst_toml, dst_toml)
+
+            key_full = (case_name, mode, "restart_full")
+            cmd_full, env_full = self._build_exec_cmd_and_env(
+                case, mode, exe, work_full, case["input_toml"])
+            mpi_ranks = case.get("mpi_ranks", 4)
+            job_full = prepare_and_submit(
+                work_dir=work_full, case_name=f"{case_name}_rst_full",
+                mode=mode, cmd=cmd_full, env_vars=env_full,
+                omp_threads=self.omp_threads, mpi_ranks=mpi_ranks,
+                memory_gb=self.condor_memory_gb, key=key_full,
+                verbose=self.verbose)
+            restart_jobs[_key_to_str(key_full)] = {
+                "work_dir": job_full.work_dir,
+                "cluster_id": job_full.cluster_id,
+                "log_path": job_full.log_path,
+            }
+
+            # --- Stage s1 ---
+            work_s1 = self._get_work_dir(case_name, mode, "restart_s1")
+            ensure_dir(work_s1)
+            setup_work_dir(work_s1, case["source_dir"],
+                           files_to_link, self.repo_root)
+            prefix_s1 = f"{case['output_prefix']}_s1"
+            s1_toml = os.path.join(work_s1, case["input_toml"])
+            patch_toml(src_toml, s1_toml, {
+                "prefix": f"./{prefix_s1}",
+                "nstep": half,
+                "nstep_save": nstep_save,
+                "nstep_save_rst": half,
+            })
+            localize_file_paths(s1_toml, s1_toml)
+
+            key_s1 = (case_name, mode, "restart_s1")
+            cmd_s1, env_s1 = self._build_exec_cmd_and_env(
+                case, mode, exe, work_s1, case["input_toml"])
+            job_s1 = prepare_and_submit(
+                work_dir=work_s1, case_name=f"{case_name}_rst_s1",
+                mode=mode, cmd=cmd_s1, env_vars=env_s1,
+                omp_threads=self.omp_threads, mpi_ranks=mpi_ranks,
+                memory_gb=self.condor_memory_gb, key=key_s1,
+                verbose=self.verbose)
+            restart_jobs[_key_to_str(key_s1)] = {
+                "work_dir": job_s1.work_dir,
+                "cluster_id": job_s1.cluster_id,
+                "log_path": job_s1.log_path,
+            }
+
+        return restart_jobs
+
+    def _condor_collect_from_manifest(self, manifest, manifest_path,
+                                      cases, modes, levels):
+        """Collect results from a prior condor submission using its manifest.
+
+        Checks which jobs are done, waits for pending ones, runs analysis,
+        and handles deferred restart stage s2.
+        """
+        from .condor import (
+            CondorBatch, CondorJob, collect_results_from_manifest,
+            _str_to_key,
+        )
+
+        non_restart_levels = [l for l in levels if l != "restart"]
+        do_restart = "restart" in levels
+
+        status = collect_results_from_manifest(manifest)
+        n_completed = len(status["completed"])
+        n_pending = len(status["pending"])
+        print(f"  Manifest found: {n_completed} completed, "
+              f"{n_pending} pending job(s).")
+
+        # Populate run_results for completed jobs.
+        for key_str, exit_code in status["completed"].items():
+            key = _str_to_key(key_str)
+            info = (manifest.get("jobs", {}).get(key_str)
+                    or manifest.get("restart_jobs", {}).get(key_str))
+            if info:
+                self.run_results[key] = (info["work_dir"], exit_code == 0)
+
+        # Wait for any still-pending jobs.
+        if status["pending"]:
+            batch = CondorBatch(
+                poll_interval=self.condor_poll_interval,
+                timeout=self.condor_timeout,
+                verbose=self.verbose,
+            )
+            for key_str, info in status["pending"].items():
+                key = _str_to_key(key_str)
+                job = CondorJob(
+                    cluster_id=info["cluster_id"],
+                    work_dir=info["work_dir"],
+                    log_path=info["log_path"],
+                    key=key,
+                )
+                batch.add(job)
+
+            print(f"  Waiting for {n_pending} pending job(s)...")
+            results = batch.wait_all()
+            for key, exit_code in results.items():
+                info_str = "|".join(str(k) for k in key)
+                info = (manifest.get("jobs", {}).get(info_str)
+                        or manifest.get("restart_jobs", {}).get(info_str))
+                if info:
+                    self.run_results[key] = (info["work_dir"], exit_code == 0)
+
+        # Analysis pass for non-restart levels.
+        if non_restart_levels:
+            self.run_all(cases, modes, non_restart_levels)
+
+        # Handle restart: full + s1 should now be done; submit s2, compare.
+        if do_restart:
+            for case_name in cases:
+                case = self.config[case_name]
+                if not case.get("restart_test"):
+                    continue
+                valid_modes = [m for m in modes if m in case["modes"]]
+                mode = valid_modes[0] if valid_modes else None
+                if not mode:
+                    continue
+                self._complete_restart_from_manifest(
+                    case_name, case, mode, manifest)
+
+        # Clean up manifest.
+        if os.path.isfile(manifest_path):
+            os.remove(manifest_path)
+
+    def _complete_restart_from_manifest(self, case_name, case, mode, manifest):
+        """Complete a restart test whose full + s1 stages ran from manifest.
+
+        Checks that full and s1 succeeded, copies restart file, submits s2,
+        waits, and compares.
+        """
+        from .condor import _str_to_key
+
+        key_full = (case_name, mode, "restart_full")
+        key_s1 = (case_name, mode, "restart_s1")
+
+        # Check that full and s1 are in run_results and succeeded.
+        if key_full not in self.run_results:
+            self.reporter.add(TestResult(
+                case_name, mode, "restart", TestResult.SKIP,
+                "full run not found in manifest"))
+            return
+        if key_s1 not in self.run_results:
+            self.reporter.add(TestResult(
+                case_name, mode, "restart", TestResult.SKIP,
+                "stage 1 not found in manifest"))
+            return
+
+        work_full, ok_full = self.run_results[key_full]
+        work_s1, ok_s1 = self.run_results[key_s1]
+
+        if not ok_full:
+            self.reporter.add(TestResult(
+                case_name, mode, "restart", TestResult.FAIL,
+                "full run failed"))
+            return
+        if not ok_s1:
+            self.reporter.add(TestResult(
+                case_name, mode, "restart", TestResult.FAIL,
+                "stage 1 (first half) failed"))
+            return
+
+        try:
+            self.builder.build_for_mode(mode)
+        except RuntimeError:
+            self.reporter.add(TestResult(
+                case_name, mode, "restart", TestResult.FAIL, "build failed"))
+            return
+
+        exe = self.builder.get_exe(mode)
+        nstep = case.get("regression_nstep") or case.get("short_nstep", 100)
+        nstep_save = case.get("nstep_save", 10)
+        use_mpi = mode in ("mpi", "mpi_omp")
+        n_replicas = case.get("n_replicas", 1)
+        prefix_s1 = f"{case['output_prefix']}_s1"
+
+        # Find restart file from s1.
+        if use_mpi and n_replicas > 1:
+            rst_pattern = os.path.join(work_s1, f"{prefix_s1}_0*.rst")
+            rst_files = sorted(glob.glob(rst_pattern))
+            if not rst_files:
+                self.reporter.add(TestResult(
+                    case_name, mode, "restart", TestResult.FAIL,
+                    "no restart files from stage 1"))
+                return
+            combined_rst = os.path.join(work_s1, f"{prefix_s1}.rst")
+            with open(combined_rst, "wb") as out:
+                for rf in rst_files:
+                    with open(rf, "rb") as inp:
+                        out.write(inp.read())
+            rst_path = combined_rst
+        else:
+            rst_pattern = os.path.join(work_s1, f"{prefix_s1}*.rst")
+            rst_files = sorted(glob.glob(rst_pattern))
+            if not rst_files:
+                self.reporter.add(TestResult(
+                    case_name, mode, "restart", TestResult.FAIL,
+                    "no restart files from stage 1"))
+                return
+            rst_path = rst_files[-1]
+
+        # Stage s2: second half from restart.
+        source_dir = os.path.join(self.repo_root, case["source_dir"])
+        src_toml = os.path.join(source_dir, case["input_toml"])
+        files_to_link = list(case.get("required_files", []))
+
+        work_s2 = self._get_work_dir(case_name, mode, "restart_s2")
+        ensure_dir(work_s2)
+        setup_work_dir(work_s2, case["source_dir"],
+                       files_to_link, self.repo_root)
+
+        rst_basename = os.path.basename(rst_path)
+        copy_file(rst_path, os.path.join(work_s2, rst_basename))
+
+        prefix_s2 = f"{case['output_prefix']}_s2"
+        s2_toml = os.path.join(work_s2, case["input_toml"])
+        patch_toml(src_toml, s2_toml, {
+            "prefix": f"./{prefix_s2}",
+            "nstep": nstep,
+            "nstep_save": nstep_save,
+            "nstep_save_rst": nstep,
+        })
+        localize_file_paths(s2_toml, s2_toml)
+
+        ok_s2 = self._condor_submit_and_wait(
+            case, mode, exe, work_s2, case["input_toml"],
+            extra_args=rst_basename, label=f"{case_name}_rst_s2")
+        if not ok_s2:
+            self.reporter.add(TestResult(
+                case_name, mode, "restart", TestResult.FAIL,
+                "stage 2 (restart) failed"))
+            return
+
+        # Compare full vs s2.
+        self._compare_restart_outputs(case_name, case, mode,
+                                      work_full, work_s2, prefix_s2)
 
     def _run_restart_condor(self, case_name, case, mode):
         """Restart consistency test using sequential HTCondor job submissions.
@@ -792,9 +1151,6 @@ class TestRunner:
         if half < nstep_save:
             half = nstep_save
 
-        use_mpi = mode in ("mpi", "mpi_omp")
-        n_replicas = case.get("n_replicas", 1)
-
         exe = self.builder.get_exe(mode)
         source_dir = os.path.join(self.repo_root, case["source_dir"])
         src_toml = os.path.join(source_dir, case["input_toml"])
@@ -803,7 +1159,8 @@ class TestRunner:
         # --- Stage 1: full continuous run ---
         work_full = self._get_work_dir(case_name, mode, "restart_full")
         ensure_dir(work_full)
-        setup_work_dir(work_full, case["source_dir"], files_to_link, self.repo_root)
+        setup_work_dir(work_full, case["source_dir"], files_to_link,
+                       self.repo_root)
         dst_toml = os.path.join(work_full, case["input_toml"])
         patch_toml(src_toml, dst_toml, {
             "prefix": f"./{case['output_prefix']}",
@@ -818,14 +1175,15 @@ class TestRunner:
             label=f"{case_name}_rst_full")
         if not ok_full:
             self.reporter.add(TestResult(
-                case_name, mode, "restart", TestResult.FAIL, "full run failed"
-            ))
+                case_name, mode, "restart", TestResult.FAIL,
+                "full run failed"))
             return
 
         # --- Stage 2: first half ---
         work_s1 = self._get_work_dir(case_name, mode, "restart_s1")
         ensure_dir(work_s1)
-        setup_work_dir(work_s1, case["source_dir"], files_to_link, self.repo_root)
+        setup_work_dir(work_s1, case["source_dir"], files_to_link,
+                       self.repo_root)
         prefix_s1 = f"{case['output_prefix']}_s1"
         s1_toml = os.path.join(work_s1, case["input_toml"])
         patch_toml(src_toml, s1_toml, {
@@ -842,19 +1200,20 @@ class TestRunner:
         if not ok_s1:
             self.reporter.add(TestResult(
                 case_name, mode, "restart", TestResult.FAIL,
-                "stage 1 (first half) failed"
-            ))
+                "stage 1 (first half) failed"))
             return
 
-        # --- Find and prepare restart file ---
+        # --- Find restart file and run s2 ---
+        use_mpi = mode in ("mpi", "mpi_omp")
+        n_replicas = case.get("n_replicas", 1)
+
         if use_mpi and n_replicas > 1:
             rst_pattern = os.path.join(work_s1, f"{prefix_s1}_0*.rst")
             rst_files = sorted(glob.glob(rst_pattern))
             if not rst_files:
                 self.reporter.add(TestResult(
                     case_name, mode, "restart", TestResult.FAIL,
-                    "no restart files from stage 1"
-                ))
+                    "no restart files from stage 1"))
                 return
             combined_rst = os.path.join(work_s1, f"{prefix_s1}.rst")
             with open(combined_rst, "wb") as out:
@@ -868,19 +1227,17 @@ class TestRunner:
             if not rst_files:
                 self.reporter.add(TestResult(
                     case_name, mode, "restart", TestResult.FAIL,
-                    "no restart files from stage 1"
-                ))
+                    "no restart files from stage 1"))
                 return
             rst_path = rst_files[-1]
 
-        # --- Stage 3: second half from restart ---
         work_s2 = self._get_work_dir(case_name, mode, "restart_s2")
         ensure_dir(work_s2)
-        setup_work_dir(work_s2, case["source_dir"], files_to_link, self.repo_root)
+        setup_work_dir(work_s2, case["source_dir"], files_to_link,
+                       self.repo_root)
 
         rst_basename = os.path.basename(rst_path)
-        rst_in_s2 = os.path.join(work_s2, rst_basename)
-        copy_file(rst_path, rst_in_s2)
+        copy_file(rst_path, os.path.join(work_s2, rst_basename))
 
         prefix_s2 = f"{case['output_prefix']}_s2"
         s2_toml = os.path.join(work_s2, case["input_toml"])
@@ -898,17 +1255,20 @@ class TestRunner:
         if not ok_s2:
             self.reporter.add(TestResult(
                 case_name, mode, "restart", TestResult.FAIL,
-                "stage 2 (restart) failed"
-            ))
+                "stage 2 (restart) failed"))
             return
 
         # --- Compare ---
+        self._compare_restart_outputs(case_name, case, mode,
+                                      work_full, work_s2, prefix_s2)
+
+    def _compare_restart_outputs(self, case_name, case, mode,
+                                 work_full, work_s2, prefix_s2):
+        """Compare full run outputs against restart stage 2 outputs."""
         full_outs = sorted(glob.glob(
-            os.path.join(work_full, f"{case['output_prefix']}*.out")
-        ))
+            os.path.join(work_full, f"{case['output_prefix']}*.out")))
         s2_outs = sorted(glob.glob(
-            os.path.join(work_s2, f"{prefix_s2}*.out")
-        ))
+            os.path.join(work_s2, f"{prefix_s2}*.out")))
 
         if not full_outs or not s2_outs:
             self.reporter.add(TestResult(
@@ -922,10 +1282,7 @@ class TestRunner:
 
         for f_full, f_s2 in zip(full_outs, s2_outs):
             result = compare_out_files(
-                f_s2, f_full,
-                atol=1e-10, rtol=1e-10,
-                align_steps=True
-            )
+                f_s2, f_full, atol=1e-10, rtol=1e-10, align_steps=True)
             worst_rdiff = max(worst_rdiff, result.max_rel_diff)
             if not result.passed:
                 all_passed = False
@@ -933,13 +1290,11 @@ class TestRunner:
         if all_passed:
             self.reporter.add(TestResult(
                 case_name, mode, "restart", TestResult.PASS,
-                f"max_rdiff={worst_rdiff:.2e}"
-            ))
+                f"max_rdiff={worst_rdiff:.2e}"))
         else:
             self.reporter.add(TestResult(
                 case_name, mode, "restart", TestResult.FAIL,
-                result.summary
-            ))
+                result.summary))
 
     def generate_reference(self, cases, mode="serial", description=""):
         """Run tests and save output as reference data set.

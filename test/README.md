@@ -103,6 +103,7 @@ With no arguments, prints info and usage examples.
 | `--condor-memory GB` | 4 | Memory per job in GB |
 | `--condor-poll-interval SECS` | 30 | Polling interval while waiting for jobs |
 | `--condor-timeout SECS` | 3600 | Maximum seconds to wait for all jobs |
+| `--condor-submit-only` | | Submit jobs via HTCondor and exit (collect later with `--condor`) |
 
 ## Running Tests on HTCondor
 
@@ -126,6 +127,33 @@ On the Pharmacy HPC cluster, you can offload simulation jobs to cluster nodes in
 # Restart test (sequential HTCondor stages)
 ./test/run_tests.py --levels restart --cases md_simple --serial-exe ./build/sis --condor
 ```
+
+### Submit-only / collect workflow
+
+When the cluster is busy, jobs can sit in the queue for a long time. Instead of blocking, you can submit jobs and collect results later in two separate steps:
+
+```bash
+# Step 1: submit all jobs and exit immediately
+./test/run_tests.py --condor-submit-only --levels run,regression --modes serial,ompN \
+    --serial-exe ./build/sis --omp-exe ./build/sis
+
+# Check job status any time
+condor_q
+
+# Step 2: collect results (auto-detects completed jobs from manifest)
+./test/run_tests.py --condor --levels run,regression --modes serial,ompN \
+    --serial-exe ./build/sis --omp-exe ./build/sis
+```
+
+The `--condor-submit-only` flag writes a manifest file (`_work/_condor_manifest.json`) recording all submitted jobs. When you later run with `--condor`, the framework detects the manifest and:
+
+- If all jobs are done: skips submission and runs analysis immediately.
+- If some jobs are still running: waits only for the pending ones, then analyzes all.
+- If no jobs are done yet: waits for all (same as a normal `--condor` run).
+
+The manifest is automatically removed after successful collection.
+
+For restart tests, `--condor-submit-only` submits the independent stages (full run and first half) but defers the second half (which depends on the first half's restart file). The deferred stage is automatically submitted and waited on during the collect step.
 
 ### How it works
 

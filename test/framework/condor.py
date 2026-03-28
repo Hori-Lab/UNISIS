@@ -1,5 +1,7 @@
 """HTCondor job submission interface for the UNISIS test framework."""
 
+import datetime
+import json
 import os
 import re
 import subprocess
@@ -317,3 +319,90 @@ def prepare_and_submit(work_dir, case_name, mode, cmd, env_vars,
         print(f"  Submitted {case_name}/{mode} -> cluster {cluster_id} "
               f"({n_cpus} CPU(s), {memory_gb} GB)")
     return CondorJob(cluster_id, work_dir, log_path, key)
+
+
+# ---------------------------------------------------------------------------
+# Manifest (for submit-only / collect workflow)
+# ---------------------------------------------------------------------------
+
+MANIFEST_FILENAME = "_condor_manifest.json"
+
+
+def _key_to_str(key):
+    """Convert a run key tuple to a manifest-safe string."""
+    return "|".join(str(k) for k in key)
+
+
+def _str_to_key(key_str):
+    """Convert a manifest key string back to a tuple."""
+    return tuple(key_str.split("|"))
+
+
+def write_manifest(manifest_path, cases, modes, levels, jobs, restart_jobs=None):
+    """Write a condor manifest file.
+
+    Parameters
+    ----------
+    manifest_path : str
+        Path to write the JSON manifest.
+    cases : list[str]
+        Test case names that were submitted.
+    modes : list[str]
+        Parallelization modes that were submitted.
+    levels : list[str]
+        Test levels that were submitted.
+    jobs : dict
+        Mapping of key_str -> {work_dir, cluster_id, log_path}.
+    restart_jobs : dict, optional
+        Same format as jobs, for restart stages (full, s1).
+    """
+    data = {
+        "submitted_at": datetime.datetime.now().isoformat(),
+        "cases": list(cases),
+        "modes": list(modes),
+        "levels": list(levels),
+        "jobs": jobs,
+        "restart_jobs": restart_jobs or {},
+    }
+    with open(manifest_path, "w") as f:
+        json.dump(data, f, indent=2)
+
+
+def read_manifest(manifest_path):
+    """Read a condor manifest file.
+
+    Returns
+    -------
+    dict or None
+        The manifest data, or None if the file does not exist.
+    """
+    if not os.path.isfile(manifest_path):
+        return None
+    with open(manifest_path) as f:
+        return json.load(f)
+
+
+def collect_results_from_manifest(manifest):
+    """Check completion status of all jobs in a manifest.
+
+    Parameters
+    ----------
+    manifest : dict
+        Manifest data from read_manifest().
+
+    Returns
+    -------
+    dict
+        With keys "completed" (key_str -> exit_code) and
+        "pending" (key_str -> {work_dir, cluster_id, log_path}).
+    """
+    completed = {}
+    pending = {}
+    for section in ("jobs", "restart_jobs"):
+        for key_str, info in manifest.get(section, {}).items():
+            rc = parse_log_for_exit_code(info["log_path"])
+            if rc is not None:
+                completed[key_str] = rc
+            else:
+                pending[key_str] = info
+    return {"completed": completed, "pending": pending}

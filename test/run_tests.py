@@ -124,6 +124,10 @@ def parse_args():
         "--condor-timeout", type=int, default=3600,
         help="Maximum seconds to wait for all condor jobs (default: 3600)",
     )
+    condor_group.add_argument(
+        "--condor-submit-only", action="store_true",
+        help="Submit jobs via HTCondor and exit (collect later with --condor)",
+    )
 
     # Reference generation and selection
     parser.add_argument(
@@ -216,7 +220,7 @@ def main():
     levels = resolve_list(args.levels, ALL_LEVELS)
 
     # HTCondor sanity check
-    if args.condor:
+    if args.condor or args.condor_submit_only:
         import shutil as _shutil
         if not _shutil.which("condor_submit"):
             print("Error: condor_submit not found in PATH. Is HTCondor installed?")
@@ -253,7 +257,7 @@ def main():
         keep_work=args.keep_work,
         verbose=args.verbose,
         ref_label=args.reference,
-        condor=args.condor,
+        condor=args.condor or args.condor_submit_only,
         condor_memory_gb=args.condor_memory,
         condor_poll_interval=args.condor_poll_interval,
         condor_timeout=args.condor_timeout,
@@ -283,7 +287,10 @@ def main():
                 sys.exit(2)
 
     # Run tests
-    if args.condor:
+    if args.condor_submit_only:
+        runner.condor_submit_only(cases, modes, levels)
+        return
+    elif args.condor:
         runner.condor_run_all(cases, modes, levels)
     else:
         runner.run_all(cases, modes, levels)
