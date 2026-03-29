@@ -117,7 +117,8 @@ class TestRunner:
         return os.path.join(self.work_base, tag)
 
     def _ensure_run(self, case_name, case, mode, nstep_override=None,
-                    suffix="", extra_toml_patches=None, extra_args=""):
+                    nstep_save_override=None, suffix="",
+                    extra_toml_patches=None, extra_args=""):
         """Ensure a test case has been run for a given mode.
 
         Returns (work_dir, success) tuple. Reuses previous run if available.
@@ -151,10 +152,13 @@ class TestRunner:
 
         if nstep_override is not None:
             patches["nstep"] = nstep_override
-        if "nstep_save" in case and nstep_override is not None:
-            patches["nstep_save"] = case["nstep_save"]
-        if "nstep_save_rst" in case and nstep_override is not None:
-            patches["nstep_save_rst"] = case["nstep_save_rst"]
+        if nstep_override is not None:
+            nstep_save = nstep_save_override or case.get("nstep_save")
+            if nstep_save is not None:
+                patches["nstep_save"] = nstep_save
+            nstep_save_rst = case.get("nstep_save_rst")
+            if nstep_save_rst is not None:
+                patches["nstep_save_rst"] = nstep_save_rst
         if extra_toml_patches:
             patches.update(extra_toml_patches)
 
@@ -217,6 +221,14 @@ class TestRunner:
         rc, stdout, stderr, elapsed = run_command(
             cmd, cwd=work_dir, env=env, timeout=self.timeout
         )
+
+        # Save stdout/stderr to files in work directory
+        if stdout:
+            with open(os.path.join(work_dir, "_stdout.txt"), "w") as f:
+                f.write(stdout)
+        if stderr:
+            with open(os.path.join(work_dir, "_stderr.txt"), "w") as f:
+                f.write(stderr)
 
         if self.verbose and (stdout or stderr):
             if stdout:
@@ -310,8 +322,10 @@ class TestRunner:
             return
 
         nstep = case.get("short_nstep")
+        nstep_save = case.get("short_nstep_save")
         work_dir, success = self._ensure_run(case_name, case, mode,
-                                             nstep_override=nstep)
+                                             nstep_override=nstep,
+                                             nstep_save_override=nstep_save)
 
         if success is None:  # submitted to condor, analysis deferred
             return
@@ -336,6 +350,24 @@ class TestRunner:
             ))
             return
 
+        # Check expected output extensions
+        prefix = case["output_prefix"]
+        for ext in case.get("reference_extensions", []):
+            matched = glob.glob(os.path.join(work_dir, f"{prefix}*{ext}"))
+            if not matched:
+                self.reporter.add(TestResult(
+                    case_name, mode, "run", TestResult.FAIL,
+                    f"no {ext} file produced"
+                ))
+                return
+            for f in matched:
+                if os.path.getsize(f) == 0:
+                    self.reporter.add(TestResult(
+                        case_name, mode, "run", TestResult.FAIL,
+                        f"empty file: {os.path.basename(f)}"
+                    ))
+                    return
+
         self.reporter.add(TestResult(
             case_name, mode, "run", TestResult.PASS
         ))
@@ -343,6 +375,7 @@ class TestRunner:
     def _run_consistency(self, case_name, case, modes):
         """Level 2: consistency across modes."""
         nstep = case.get("regression_nstep") or case.get("short_nstep")
+        nstep_save = case.get("regression_nstep_save") or case.get("short_nstep_save")
 
         # Ensure all modes have been run
         work_dirs = {}
@@ -352,7 +385,8 @@ class TestRunner:
             except RuntimeError:
                 continue
             wd, ok = self._ensure_run(case_name, case, mode,
-                                      nstep_override=nstep)
+                                      nstep_override=nstep,
+                                      nstep_save_override=nstep_save)
             if ok is None:  # submitted to condor, analysis deferred
                 continue
             if ok:
@@ -424,6 +458,7 @@ class TestRunner:
             return
 
         nstep = case.get("regression_nstep")
+        nstep_save = case.get("regression_nstep_save")
         try:
             self.builder.build_for_mode(mode)
         except RuntimeError as e:
@@ -434,7 +469,8 @@ class TestRunner:
             return
 
         work_dir, success = self._ensure_run(case_name, case, mode,
-                                             nstep_override=nstep)
+                                             nstep_override=nstep,
+                                             nstep_save_override=nstep_save)
         if success is None:  # submitted to condor, analysis deferred
             return
 
@@ -461,7 +497,8 @@ class TestRunner:
 
         for actual, ref in zip(sorted(out_files), ref_files):
             result = compare_out_files(actual, ref,
-                                       atol=tol["atol"], rtol=tol["rtol"])
+                                       atol=tol["atol"], rtol=tol["rtol"],
+                                       align_steps=True)
             worst_rdiff = max(worst_rdiff, result.max_rel_diff)
             if not result.passed:
                 all_passed = False
@@ -492,7 +529,7 @@ class TestRunner:
             return
 
         nstep = case.get("regression_nstep") or case.get("short_nstep", 100)
-        nstep_save = case.get("nstep_save", 10)
+        nstep_save = case.get("regression_nstep_save") or case.get("nstep_save", 10)
         nstep_save_rst = case.get("nstep_save_rst", nstep // 2)
         half = nstep // 2
         # Ensure half is a multiple of nstep_save
@@ -934,7 +971,7 @@ class TestRunner:
                 continue
 
             nstep = case.get("regression_nstep") or case.get("short_nstep", 100)
-            nstep_save = case.get("nstep_save", 10)
+            nstep_save = case.get("regression_nstep_save") or case.get("nstep_save", 10)
             nstep_save_rst = case.get("nstep_save_rst", nstep // 2)
             half = nstep // 2
             half = (half // nstep_save) * nstep_save
@@ -1129,7 +1166,7 @@ class TestRunner:
 
         exe = self.builder.get_exe(mode)
         nstep = case.get("regression_nstep") or case.get("short_nstep", 100)
-        nstep_save = case.get("nstep_save", 10)
+        nstep_save = case.get("regression_nstep_save") or case.get("nstep_save", 10)
         use_mpi = mode in ("mpi", "mpi_omp")
         n_replicas = case.get("n_replicas", 1)
         prefix_s1 = f"{case['output_prefix']}_s1"
@@ -1210,7 +1247,7 @@ class TestRunner:
             return
 
         nstep = case.get("regression_nstep") or case.get("short_nstep", 100)
-        nstep_save = case.get("nstep_save", 10)
+        nstep_save = case.get("regression_nstep_save") or case.get("nstep_save", 10)
         nstep_save_rst = case.get("nstep_save_rst", nstep // 2)
         half = nstep // 2
         half = (half // nstep_save) * nstep_save
@@ -1362,18 +1399,20 @@ class TestRunner:
                 case_name, mode, "restart", TestResult.FAIL,
                 result.summary))
 
-    def generate_reference(self, cases, mode="serial", description=""):
+    def _ref_mode_for_case(self, case):
+        """Return the mode to use for reference generation of a case."""
+        return case.get("reference_mode", case["modes"][0])
+
+    def generate_reference(self, cases, description=""):
         """Run tests and save output as reference data set.
 
         Creates a labeled subdirectory under test/reference/ with summary.json
-        and per-case .out files.
+        and per-case .out files plus stdout logs.
 
         Parameters
         ----------
         cases : list[str]
             Test case names to generate reference for.
-        mode : str
-            Mode to use for reference runs.
         description : str
             Optional description for the reference set.
         """
@@ -1385,14 +1424,11 @@ class TestRunner:
         print(f"  Reference set: {label}")
 
         generated_cases = []
+        modes_used = set()
 
         for case_name in cases:
             case = self.config[case_name]
-
-            if mode not in case["modes"]:
-                mode_to_use = case["modes"][0]
-            else:
-                mode_to_use = mode
+            mode_to_use = self._ref_mode_for_case(case)
 
             missing = check_prerequisites(case, self.repo_root)
             if missing:
@@ -1406,36 +1442,251 @@ class TestRunner:
                 continue
 
             nstep = case.get("regression_nstep")
+            nstep_save = case.get("regression_nstep_save")
             work_dir, success = self._ensure_run(
                 case_name, case, mode_to_use,
-                nstep_override=nstep, suffix="ref"
+                nstep_override=nstep, nstep_save_override=nstep_save,
+                suffix="ref"
             )
 
             if not success:
                 print(f"  FAIL {case_name}: run failed")
                 continue
 
-            out_files = self._find_out_files(work_dir, case)
-            if not out_files:
-                print(f"  FAIL {case_name}: no .out files")
-                continue
-
-            # Copy to reference set directory
-            ref_dir = os.path.join(ref_set_dir, case_name)
-            ensure_dir(ref_dir)
-            for f in out_files:
-                dst = os.path.join(ref_dir, os.path.basename(f))
-                copy_file(f, dst)
-                print(f"  Saved {dst}")
-
+            self._copy_ref_outputs(case_name, case, work_dir, ref_set_dir)
             generated_cases.append(case_name)
-            print(f"  OK {case_name}: {len(out_files)} reference file(s)")
+            modes_used.add(mode_to_use)
 
         if generated_cases:
+            mode_label = ", ".join(sorted(modes_used))
             write_ref_summary(ref_set_dir, self.repo_root,
-                              generated_cases, mode, description)
+                              generated_cases, mode_label, description)
             print(f"  Summary written to {ref_set_dir}/summary.json")
         else:
-            # Clean up empty directory
             shutil.rmtree(ref_set_dir, ignore_errors=True)
             print("  No reference data generated.")
+
+    def condor_generate_reference(self, cases, description=""):
+        """Generate reference data using HTCondor for simulation runs.
+
+        If a manifest from a prior --condor-submit-only exists, auto-detects
+        completed jobs and skips re-submission.
+
+        Parameters
+        ----------
+        cases : list[str]
+            Test case names to generate reference for.
+        description : str
+            Optional description for the reference set.
+        """
+        from .condor import (
+            CondorBatch, CondorJob, MANIFEST_FILENAME,
+            read_manifest, collect_results_from_manifest,
+            parse_log_for_exit_code, _str_to_key,
+        )
+
+        manifest_path = os.path.join(self.work_base, MANIFEST_FILENAME)
+        manifest = read_manifest(manifest_path)
+
+        if manifest:
+            # Collect from prior submit-only
+            status = collect_results_from_manifest(manifest)
+
+            # Populate completed results
+            for key_str, exit_code in status["completed"].items():
+                key = _str_to_key(key_str)
+                info = (manifest.get("jobs", {}).get(key_str)
+                        or manifest.get("restart_jobs", {}).get(key_str))
+                if info:
+                    self.run_results[key] = (info["work_dir"], exit_code == 0)
+
+            # Wait for pending jobs
+            if status["pending"]:
+                batch = CondorBatch(
+                    poll_interval=self.condor_poll_interval,
+                    timeout=self.condor_timeout,
+                    verbose=self.verbose,
+                )
+                for key_str, info in status["pending"].items():
+                    key = _str_to_key(key_str)
+                    job = CondorJob(info["cluster_id"], info["work_dir"],
+                                   info["log_path"], key)
+                    batch.add(job)
+                print(f"  Waiting for {len(batch.jobs)} pending job(s)...")
+                results = batch.wait_all()
+                for key, exit_code in results.items():
+                    work_dir = self._get_work_dir(key[0], key[1], key[2])
+                    self.run_results[key] = (work_dir, exit_code == 0)
+
+            # Remove manifest
+            os.remove(manifest_path)
+        else:
+            # No manifest — submit fresh
+            self._condor_batch = CondorBatch(
+                poll_interval=self.condor_poll_interval,
+                timeout=self.condor_timeout,
+                verbose=self.verbose,
+            )
+
+            self._condor_batch_mode = True
+            for case_name in cases:
+                case = self.config[case_name]
+                mode_to_use = self._ref_mode_for_case(case)
+
+                missing = check_prerequisites(case, self.repo_root)
+                if missing:
+                    print(f"  SKIP {case_name}: missing {', '.join(missing)}")
+                    continue
+
+                try:
+                    self.builder.build_for_mode(mode_to_use)
+                except RuntimeError as e:
+                    print(f"  FAIL {case_name}: build failed: {e}")
+                    continue
+
+                nstep = case.get("regression_nstep")
+                nstep_save = case.get("regression_nstep_save")
+                self._ensure_run(
+                    case_name, case, mode_to_use,
+                    nstep_override=nstep, nstep_save_override=nstep_save,
+                    suffix="ref"
+                )
+            self._condor_batch_mode = False
+
+            if not self._condor_batch.jobs:
+                print("  No jobs submitted.")
+                return
+
+            print(f"  Waiting for {len(self._condor_batch.jobs)} reference job(s)...")
+            results = self._condor_batch.wait_all()
+
+            for key, exit_code in results.items():
+                work_dir = self._get_work_dir(key[0], key[1], key[2])
+                self.run_results[key] = (work_dir, exit_code == 0)
+
+        # Copy outputs to reference directory
+        ref_base = os.path.join(self.repo_root, "test", "reference")
+        label = generate_ref_label(self.repo_root)
+        ref_set_dir = os.path.join(ref_base, label)
+        ensure_dir(ref_set_dir)
+
+        print(f"  Reference set: {label}")
+
+        generated_cases = []
+        modes_used = set()
+
+        for case_name in cases:
+            case = self.config[case_name]
+            mode_to_use = self._ref_mode_for_case(case)
+            key = (case_name, mode_to_use, "ref")
+
+            work_dir, success = self.run_results.get(key, (None, False))
+            if not success:
+                print(f"  FAIL {case_name}: run failed")
+                continue
+
+            self._copy_ref_outputs(case_name, case, work_dir, ref_set_dir)
+            generated_cases.append(case_name)
+            modes_used.add(mode_to_use)
+
+        if generated_cases:
+            mode_label = ", ".join(sorted(modes_used))
+            write_ref_summary(ref_set_dir, self.repo_root,
+                              generated_cases, mode_label, description)
+            print(f"  Summary written to {ref_set_dir}/summary.json")
+        else:
+            shutil.rmtree(ref_set_dir, ignore_errors=True)
+            print("  No reference data generated.")
+
+    def condor_generate_reference_submit_only(self, cases):
+        """Submit reference generation jobs via HTCondor and exit.
+
+        Writes a manifest so that a later --condor run can collect.
+
+        Parameters
+        ----------
+        cases : list[str]
+            Test case names to generate reference for.
+        """
+        from .condor import CondorBatch, MANIFEST_FILENAME
+
+        self._condor_batch = CondorBatch(
+            poll_interval=self.condor_poll_interval,
+            timeout=self.condor_timeout,
+            verbose=self.verbose,
+        )
+
+        self._condor_batch_mode = True
+        ref_cases = []
+        for case_name in cases:
+            case = self.config[case_name]
+            mode_to_use = self._ref_mode_for_case(case)
+
+            missing = check_prerequisites(case, self.repo_root)
+            if missing:
+                print(f"  SKIP {case_name}: missing {', '.join(missing)}")
+                continue
+
+            try:
+                self.builder.build_for_mode(mode_to_use)
+            except RuntimeError as e:
+                print(f"  FAIL {case_name}: build failed: {e}")
+                continue
+
+            nstep = case.get("regression_nstep")
+            nstep_save = case.get("regression_nstep_save")
+            self._ensure_run(
+                case_name, case, mode_to_use,
+                nstep_override=nstep, nstep_save_override=nstep_save,
+                suffix="ref"
+            )
+            ref_cases.append(case_name)
+        self._condor_batch_mode = False
+
+        if not self._condor_batch.jobs:
+            print("  No jobs submitted.")
+            return
+
+        # Write manifest
+        modes_used = [self._ref_mode_for_case(self.config[c]) for c in ref_cases]
+        manifest_path = os.path.join(self.work_base, MANIFEST_FILENAME)
+        self._write_manifest_from_batch(
+            manifest_path, ref_cases, modes_used,
+            ["generate-reference"], restart_jobs={})
+
+        n_total = len(self._condor_batch.jobs)
+        print(f"  Submitted {n_total} reference job(s). Manifest: {manifest_path}")
+        print(f"  Run with --condor --generate-reference (same args) to collect.")
+
+    def _copy_ref_outputs(self, case_name, case, work_dir, ref_set_dir):
+        """Copy output files and stdout log from work_dir to reference directory."""
+        prefix = case["output_prefix"]
+        extensions = [".out"] + list(case.get("reference_extensions", []))
+
+        all_files = []
+        for ext in extensions:
+            pattern = os.path.join(work_dir, f"{prefix}*{ext}")
+            all_files.extend(glob.glob(pattern))
+        all_files = sorted(set(all_files))
+
+        if not all_files:
+            print(f"  FAIL {case_name}: no output files")
+            return
+
+        ref_dir = os.path.join(ref_set_dir, case_name)
+        ensure_dir(ref_dir)
+        for f in all_files:
+            dst = os.path.join(ref_dir, os.path.basename(f))
+            copy_file(f, dst)
+            print(f"  Saved {dst}")
+
+        # Copy stdout log (local runs: _stdout.txt, condor: _condor_stdout)
+        for stdout_name in ("_stdout.txt", "_condor_stdout"):
+            src = os.path.join(work_dir, stdout_name)
+            if os.path.isfile(src):
+                dst = os.path.join(ref_dir, "stdout.txt")
+                copy_file(src, dst)
+                print(f"  Saved {dst}")
+                break
+
+        print(f"  OK {case_name}: {len(all_files)} reference file(s)")

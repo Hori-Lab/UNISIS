@@ -2,6 +2,7 @@
 *.mod
 build/
 build_mpi/
+build_serial/
 sis
 sis.mpi
 .DS_Store

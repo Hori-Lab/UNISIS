@@ -59,12 +59,12 @@ Tests are organized into progressive levels. You choose which levels to run base
 
 | Level | Purpose | When to use |
 |-------|---------|-------------|
-| `run` | Smoke test: exits 0, output files exist | After any code change |
+| `run` | Smoke test: exits 0, output files exist and non-empty | After any code change |
 | `consistency` | Same case across modes gives matching results | After changing parallelization or force accumulation |
 | `regression` | Output matches stored reference data | After any code change that could affect numerics |
 | `restart` | Split run from checkpoint matches continuous run | After changing restart I/O or integrator state |
 | `sampling` | Thermodynamic averages match expected values | After changing force field or sampling algorithm |
-| `gradient` | Analytical forces match numerical energy gradients | After changing force or energy routines |
+| `gradient` | Analytical forces match numerical energy gradients (tolerance: 0.001) | After changing force or energy routines |
 
 Typical developer workflow:
 
@@ -175,15 +175,17 @@ For restart tests, `--condor-submit-only` submits the independent stages (full r
 
 ### Files written per job
 
-Each job's work directory gets three HTCondor-related files:
+Each job's work directory gets these framework files (prefixed with `_` to avoid collision with simulation output):
 
 | File | Contents |
 |------|---------|
-| `_condor_job.sh` | Shell script that sets environment variables and runs the simulation |
-| `_condor_submit` | HTCondor submit file |
+| `_stdout.txt` | Captured stdout (local runs) |
+| `_stderr.txt` | Captured stderr (local runs) |
+| `_condor_job.sh` | Shell script that sets environment variables and runs the simulation (HTCondor) |
+| `_condor_submit` | HTCondor submit file (HTCondor) |
 | `_condor.log` | HTCondor event log (used to detect job completion and exit code) |
-| `_condor_stdout` | Captured stdout from the job |
-| `_condor_stderr` | Captured stderr from the job |
+| `_condor_stdout` | Captured stdout (HTCondor) |
+| `_condor_stderr` | Captured stderr (HTCondor) |
 
 ### Troubleshooting HTCondor jobs
 
@@ -201,9 +203,12 @@ test/reference/
   2026-01-01_abc1234/             # Auto-generated label: YYYY-MM-DD_<commit>
     summary.json
     md_simple/
-      test_md.out
+      test_md.out                 # Simulation output
+      test_md.dcd                 # Extra output (if in reference_extensions)
+      stdout.txt                  # Captured standard output
     nick_restraint/
       md.out
+      stdout.txt
 ```
 
 By default, regression tests compare against the **latest** reference set according to the date in `summary.json`. You can select a specific set with `--reference <label>`.
@@ -213,10 +218,18 @@ By default, regression tests compare against the **latest** reference set accord
 After confirming the code produces correct results (e.g., by independent validation or comparison with a previous trusted version):
 
 ```bash
-./test/run_tests.py --generate-reference --modes serial --serial-exe ./build/sis
+./test/run_tests.py --generate-reference --serial-exe ./build/sis
 ```
 
 This creates a new reference set labeled `YYYY-MM-DD_<commit>` (e.g., `2026-01-01_abc1234`) with a `summary.json` recording the date, git commit, machine name, and platform.
+
+Each case uses the mode specified by its `reference_mode` config key (default: first listed mode). This allows large-system cases to use parallel modes for reference generation while simple cases use serial.
+
+The reference directory for each case contains:
+
+- `.out` files (always)
+- Additional output files matching extensions in `reference_extensions` (e.g., `.dcd`, `.bp`)
+- `stdout.txt` — captured standard output from the simulation run, useful for investigating regression failures
 
 To add a description:
 
@@ -227,7 +240,19 @@ To add a description:
 To regenerate for a specific case only:
 
 ```bash
-./test/run_tests.py --generate-reference --cases md_simple --modes serial --serial-exe ./build/sis
+./test/run_tests.py --generate-reference --cases md_simple --serial-exe ./build/sis
+```
+
+Reference generation also supports HTCondor dispatch:
+
+```bash
+# Submit reference runs to HTCondor and wait for results
+./test/run_tests.py --generate-reference --condor --serial-exe ./build/sis
+
+# Or use the two-step submit-only / collect workflow
+./test/run_tests.py --generate-reference --condor-submit-only --serial-exe ./build/sis
+condor_q  # check progress
+./test/run_tests.py --generate-reference --condor --serial-exe ./build/sis
 ```
 
 ### Selecting a reference set for regression
@@ -259,7 +284,7 @@ Old reference sets are preserved so you can compare against any historical basel
 
 1. Run the regression test to confirm it fails and understand the magnitude of change.
 2. Verify the new results are correct (analytical check, comparison with independent code, etc.).
-3. Generate a new reference set: `./test/run_tests.py --generate-reference --cases <case> --serial-exe ./build/sis`
+3. Generate a new reference set: `./test/run_tests.py --generate-reference --cases <case> --serial-exe ./build/sis` (each case uses its `reference_mode`)
 4. Run the regression test again to confirm it passes.
 5. Commit the new reference set with a message explaining why it was generated.
 
@@ -289,13 +314,17 @@ Edit `test/config.py` and add an entry to `TEST_CASES`:
         "../../some_force_field.ff",     # relative to source_dir
     ],
     "modes": ["serial", "omp1", "ompN"],  # which modes are valid
+    "reference_mode": "serial",           # mode for reference generation
+    "reference_extensions": [".dcd"],     # extra output files to keep in reference
     "mpi_ranks": 0,                       # 0 for non-MPI tests
-    "output_prefix": "my_test",           # prefix of .out files
+    "output_prefix": "my_test",           # prefix of output files
     "has_replica_cols": False,             # True for REMD tests
     "restart_test": True,                 # include in restart tests?
+    "gradient_test": True,                # include in gradient check?
     "short_nstep": 50,                    # nstep for smoke tests
+    "short_nstep_save": 5,               # output frequency for smoke tests
     "regression_nstep": 100,              # nstep for regression tests
-    "nstep_save": 10,                     # output frequency
+    "regression_nstep_save": 10,          # output frequency for regression tests
     "nstep_save_rst": 50,                 # restart save frequency
     "tolerances": {"atol": 1e-8, "rtol": 1e-6},
 },
@@ -306,9 +335,12 @@ Key fields explained:
 - **`source_dir`**: Directory where input files live, relative to repo root.
 - **`required_files`**: Paths relative to `source_dir`. Checked before running; if any are missing, the test is skipped (not failed).
 - **`modes`**: Only modes listed here will be attempted. Use `["serial", "omp1", "ompN"]` for non-MPI tests, `["mpi", "mpi_omp"]` for REMD.
+- **`reference_mode`**: Which mode to use when generating reference data. Defaults to the first mode in `modes`. Use `"ompN"` or `"mpi"` for cases where serial is too slow.
+- **`reference_extensions`**: Extra file extensions (e.g., `[".dcd", ".bp"]`) to copy to reference data and to check during smoke tests. The `run` level verifies these files exist and are non-empty.
 - **`mpi_ranks`**: Number of MPI processes. Set to 0 for non-MPI tests.
-- **`short_nstep`**: Used for the `run` level smoke test. Keep it small for speed.
-- **`regression_nstep`**: Used for `regression` and `restart` levels. Should be long enough to produce meaningful output but short enough to run in seconds.
+- **`short_nstep`** / **`short_nstep_save`**: Step count and output frequency for the `run` level smoke test. Keep small for speed.
+- **`regression_nstep`** / **`regression_nstep_save`**: Step count and output frequency for `regression`, `restart`, and `consistency` levels.
+- **`gradient_test`**: Set to `True` to include in the `gradient` level (energy-force consistency check).
 - **`tolerances`**: `atol` is absolute tolerance, `rtol` is relative tolerance. A value passes if either tolerance is satisfied (OR logic).
 
 For REMD tests, also set:
@@ -326,7 +358,11 @@ For REMD tests, also set:
 ### Step 4: Generate reference data
 
 ```bash
+# Uses the mode specified by reference_mode in config
 ./test/run_tests.py --generate-reference --cases my_new_test --serial-exe ./build/sis
+
+# Or via HTCondor
+./test/run_tests.py --generate-reference --cases my_new_test --condor --serial-exe ./build/sis
 ```
 
 ### Step 5: Verify regression passes
@@ -391,8 +427,8 @@ For each (case, mode) combination:
 2. Symlinks input files from their source locations (using relative paths).
 3. Copies and patches the TOML file: adjusts `nstep`, `prefix`, and rewrites file paths to point to local symlinks.
 4. For MPI modes, generates a wrapper script that auto-detects the MPI implementation (OpenMPI, MPICH, SLURM) for rank routing.
-5. Runs the executable with appropriate environment (`OMP_NUM_THREADS`, etc.) — either locally via subprocess or via HTCondor if `--condor` is given.
-6. Checks results according to the requested test level.
+5. Runs the executable with appropriate environment (`OMP_NUM_THREADS`, etc.) — either locally via subprocess or via HTCondor if `--condor` is given. Stdout and stderr are saved to `_stdout.txt` / `_stderr.txt` (or `_condor_stdout` / `_condor_stderr` for HTCondor).
+6. Checks results according to the requested test level. The `run` level also verifies that files matching `reference_extensions` exist and are non-empty.
 
 ## Troubleshooting
 

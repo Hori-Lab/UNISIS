@@ -29,12 +29,21 @@ restart_input_tomls : list[str], optional
     TOML files for restart stages (stage1, stage2).
 short_nstep : int or None
     Reduced nstep for smoke tests. None = use original.
+short_nstep_save : int or None, optional
+    Output frequency for smoke tests. None = use original.
 regression_nstep : int or None
     nstep for regression tests. None = use original.
+regression_nstep_save : int or None, optional
+    Output frequency for regression tests. None = use original.
 tolerances : dict
     {"atol": float, "rtol": float} for regression comparison.
 sampling_nstep : int, optional
     nstep for sampling tests (longer runs).
+reference_mode : str, optional
+    Mode to use for generating reference data (default: first in modes).
+reference_extensions : list[str], optional
+    Additional file extensions to copy to reference data (e.g. [".dcd", ".bp"]).
+    Files matching {output_prefix}*.{ext} are copied. .out is always included.
 sampling_properties : list[tuple], optional
     [(column_index, expected_mean, tolerance_sigma), ...] for sampling checks.
     Populated after reference values are established.
@@ -52,14 +61,17 @@ TEST_CASES = {
             "T2HP.db",
             "T2HP.xyz",
         ],
-        "modes": ["serial", "omp1", "ompN"],
-        "mpi_ranks": 0,
-        "output_prefix": "test_md",
+        "modes": ["serial", "omp1", "ompN", "mpi", "mpi_omp"],
+        "reference_mode": "serial",
+        "reference_extensions": [".dcd", ".bp"],
+        "mpi_ranks": 4,
+        "output_prefix": "test",
         "has_replica_cols": False,
         "restart_test": True,
         "short_nstep": 100,
+        "short_nstep_save": 10,
         "regression_nstep": 2000,
-        "nstep_save": 100,
+        "regression_nstep_save": 100,
         "nstep_save_rst": 500,
         "tolerances": {"atol": 1e-8, "rtol": 1e-6},
         "sampling_nstep": 100000,

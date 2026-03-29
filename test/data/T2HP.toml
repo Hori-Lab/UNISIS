@@ -10,8 +10,8 @@ type = "MD"
       xyz_ini = "T2HP.xyz"
 
       [Files.Out]
-      types = ["bp"]
-      prefix = "./md"
+      types = ["bp", "bpe"]
+      prefix = "./test"
 
 [Condition]
       tempK = 333.15

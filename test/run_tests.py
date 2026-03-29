@@ -265,9 +265,13 @@ def main():
 
     if args.generate_reference:
         print("Generating reference data...")
-        mode = modes[0] if modes else "serial"
-        runner.generate_reference(cases, mode=mode,
-                                  description=args.ref_description)
+        if args.condor_submit_only:
+            runner.condor_generate_reference_submit_only(cases)
+        elif args.condor:
+            runner.condor_generate_reference(cases,
+                                             description=args.ref_description)
+        else:
+            runner.generate_reference(cases, description=args.ref_description)
         print("Done.")
         return
 
