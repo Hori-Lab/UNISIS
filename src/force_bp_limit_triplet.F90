@@ -29,7 +29,7 @@ subroutine force_bp_limit_triplet(irep, forces)
    integer :: nnt_bp_excess
    integer :: ntlist_excess(nmp)
    ! Per-nucleotide reverse index for O(degree) BP lookup
-   integer, parameter :: MAX_BP_DEGREE = 32
+   integer, parameter :: MAX_BP_DEGREE = 10
    integer :: nt_bp_count(nmp)
    integer :: nt_bp_idx(MAX_BP_DEGREE, nmp)
    integer :: nt_excess_pos(nmp)
