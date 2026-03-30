@@ -10,6 +10,7 @@ subroutine force_bp_limit_triplet(irep, forces)
    use var_potential, only : max_bp_per_nt, nbp, bp_cutoff_energy, bp_mp, bp_paras, bp_coef, &
                              basepair_parameters, flg_bias_ss, bias_ss_force
    use var_replica, only : flg_repvar, rep2val, irep2grep
+   use var_parallel
 #ifdef DUMPFORCE
    use const_idx, only : ENE
    use var_io, only : hdl_force
@@ -29,7 +30,7 @@ subroutine force_bp_limit_triplet(irep, forces)
    integer :: nnt_bp_excess
    integer :: ntlist_excess(nmp)
    ! Per-nucleotide reverse index for O(degree) BP lookup
-   integer, parameter :: MAX_BP_DEGREE = 10
+   integer, parameter :: MAX_BP_DEGREE = 32
    integer :: nt_bp_count(nmp)
    integer :: nt_bp_idx(MAX_BP_DEGREE, nmp)
    integer :: nt_excess_pos(nmp)
@@ -272,14 +273,16 @@ subroutine force_bp_limit_triplet(irep, forces)
          jmp_del = bp_mp(2, ibp, irep)
          nt_bp_count(imp_del) = nt_bp_count(imp_del) + 1
          if (nt_bp_count(imp_del) > MAX_BP_DEGREE) then
-            write(*, '(a,i0,a,i0)') 'WARNING: nt_bp_count exceeds MAX_BP_DEGREE for nt ', imp_del, &
+            write(*, '(a,i0,a,i0)') 'ERROR: nt_bp_count exceeds MAX_BP_DEGREE for nt ', imp_del, &
                ', count=', nt_bp_count(imp_del)
+            call sis_abort()
          endif
          nt_bp_idx(nt_bp_count(imp_del), imp_del) = ibp
          nt_bp_count(jmp_del) = nt_bp_count(jmp_del) + 1
          if (nt_bp_count(jmp_del) > MAX_BP_DEGREE) then
-            write(*, '(a,i0,a,i0)') 'WARNING: nt_bp_count exceeds MAX_BP_DEGREE for nt ', jmp_del, &
+            write(*, '(a,i0,a,i0)') 'ERROR: nt_bp_count exceeds MAX_BP_DEGREE for nt ', jmp_del, &
                ', count=', nt_bp_count(jmp_del)
+            call sis_abort()
          endif
          nt_bp_idx(nt_bp_count(jmp_del), jmp_del) = ibp
       endif

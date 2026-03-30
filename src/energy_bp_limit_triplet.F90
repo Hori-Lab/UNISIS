@@ -8,6 +8,7 @@ subroutine energy_bp_limit_triplet(irep, tempK_in, Ebp)
    use var_state, only : xyz, bp_status, ene_bp, flg_bp_energy, mts, temp_independent
    use var_potential, only : max_bp_per_nt, bp_cutoff_energy, nbp, bp_mp, bp_paras, bp_coef, &
                              basepair_parameters
+   use var_parallel
 
    implicit none
 
@@ -31,7 +32,7 @@ subroutine energy_bp_limit_triplet(irep, tempK_in, Ebp)
    integer :: nnt_bp_excess
    integer :: ntlist_excess(nmp)
    ! Per-nucleotide reverse index for O(degree) BP lookup
-   integer, parameter :: MAX_BP_DEGREE = 10
+   integer, parameter :: MAX_BP_DEGREE = 32
    integer :: nt_bp_count(nmp)
    integer :: nt_bp_idx(MAX_BP_DEGREE, nmp)
    integer :: nt_excess_pos(nmp)
@@ -119,14 +120,16 @@ subroutine energy_bp_limit_triplet(irep, tempK_in, Ebp)
             jmp = bp_mp(2, ibp, irep)
             nt_bp_count(imp) = nt_bp_count(imp) + 1
             if (nt_bp_count(imp) > MAX_BP_DEGREE) then
-               write(*, '(a,i0,a,i0)') 'WARNING: nt_bp_count exceeds MAX_BP_DEGREE for nt ', imp, &
+               write(*, '(a,i0,a,i0)') 'ERROR: nt_bp_count exceeds MAX_BP_DEGREE for nt ', imp, &
                   ', count=', nt_bp_count(imp)
+               call sis_abort()
             endif
             nt_bp_idx(nt_bp_count(imp), imp) = ibp
             nt_bp_count(jmp) = nt_bp_count(jmp) + 1
             if (nt_bp_count(jmp) > MAX_BP_DEGREE) then
-               write(*, '(a,i0,a,i0)') 'WARNING: nt_bp_count exceeds MAX_BP_DEGREE for nt ', jmp, &
+               write(*, '(a,i0,a,i0)') 'ERROR: nt_bp_count exceeds MAX_BP_DEGREE for nt ', jmp, &
                   ', count=', nt_bp_count(jmp)
+               call sis_abort()
             endif
             nt_bp_idx(nt_bp_count(jmp), jmp) = ibp
          endif
