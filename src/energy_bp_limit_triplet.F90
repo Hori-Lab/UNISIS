@@ -30,6 +30,12 @@ subroutine energy_bp_limit_triplet(irep, tempK_in, Ebp)
    integer :: bp_seq(nbp(irep))
    integer :: nnt_bp_excess
    integer :: ntlist_excess(nmp)
+   ! Per-nucleotide reverse index for O(degree) BP lookup
+   integer, parameter :: MAX_BP_DEGREE = 32
+   integer :: nt_bp_count(nmp)
+   integer :: nt_bp_idx(MAX_BP_DEGREE, nmp)
+   integer :: nt_excess_pos(nmp)
+   integer :: imp_del, jmp_del, pos, k
 
 
    if (.not. flg_bp_energy) then
@@ -105,44 +111,54 @@ subroutine energy_bp_limit_triplet(irep, tempK_in, Ebp)
       !$omp end parallel do
 
 
-      do   ! loop while (nnt_bp_excess > 0)
-
-         nnt_bp_excess = 0  ! Number of nucleotides that have more than one base pair
-         ntlist_excess(:) = 0
-         do imp = 1, nmp
-            if (nt_bp_excess(imp) > 0) then
-               nnt_bp_excess = nnt_bp_excess + 1
-               ntlist_excess(nnt_bp_excess) = imp
+      ! Build per-nucleotide reverse index of active BPs
+      nt_bp_count(:) = 0
+      do ibp = 1, nbp(irep)
+         if (bp_status(ibp, irep)) then
+            imp = bp_mp(1, ibp, irep)
+            jmp = bp_mp(2, ibp, irep)
+            nt_bp_count(imp) = nt_bp_count(imp) + 1
+            if (nt_bp_count(imp) > MAX_BP_DEGREE) then
+               write(*, '(a,i0,a,i0)') 'WARNING: nt_bp_count exceeds MAX_BP_DEGREE for nt ', imp, &
+                  ', count=', nt_bp_count(imp)
             endif
-         enddo
+            nt_bp_idx(nt_bp_count(imp), imp) = ibp
+            nt_bp_count(jmp) = nt_bp_count(jmp) + 1
+            if (nt_bp_count(jmp) > MAX_BP_DEGREE) then
+               write(*, '(a,i0,a,i0)') 'WARNING: nt_bp_count exceeds MAX_BP_DEGREE for nt ', jmp, &
+                  ', count=', nt_bp_count(jmp)
+            endif
+            nt_bp_idx(nt_bp_count(jmp), jmp) = ibp
+         endif
+      enddo
+
+      ! Build initial excess list with position tracking
+      nnt_bp_excess = 0
+      nt_excess_pos(:) = 0
+      do imp = 1, nmp
+         if (nt_bp_excess(imp) > 0) then
+            nnt_bp_excess = nnt_bp_excess + 1
+            ntlist_excess(nnt_bp_excess) = imp
+            nt_excess_pos(imp) = nnt_bp_excess
+         endif
+      enddo
+
+      do   ! loop while (nnt_bp_excess > 0)
 
          if (nnt_bp_excess == 0) exit
 
-         ! Randomely choose one nucleotide (nt) that has more than one base pair
-         !rnd = genrand64_real3()    ! (0,1)-real-interval
+         ! Randomly choose one nucleotide (nt) that has more than one base pair
          rnd = genrand_double3(mts(irep))    ! (0,1)-real-interval
 
          nt_delete = ntlist_excess( ceiling(rnd * nnt_bp_excess) )
-         !  1 <= nt_delete <= nnt_bp_excess
 
-         ! Generate a sequence of nucleotides that form basepairs involving nt_delete
-         nbp_seq = 0
-         bp_seq(:) = 0
-         do ibp = 1, nbp(irep)
-            if (bp_status(ibp, irep)) then
-               imp = bp_mp(1, ibp, irep)
-               jmp = bp_mp(2, ibp, irep)
-               if (imp == nt_delete .or. jmp == nt_delete) then
-                  nbp_seq = nbp_seq + 1
-                  bp_seq(nbp_seq) = ibp
-               endif
-            endif
-         enddo
+         ! Look up BPs involving nt_delete via reverse index
+         nbp_seq = nt_bp_count(nt_delete)
+         bp_seq(1:nbp_seq) = nt_bp_idx(1:nbp_seq, nt_delete)
 
          if (temp_independent == 0) then
             ! Shuffle
             do i = 1, nbp_seq
-               !rnd = genrand64_real3()   ! (0,1)-real-interval
                rnd = genrand_double3(mts(irep))   ! (0,1)-real-interval
                i_swap = ceiling(rnd*nbp_seq)
                i_save = bp_seq(i)
@@ -150,13 +166,12 @@ subroutine energy_bp_limit_triplet(irep, tempK_in, Ebp)
                bp_seq(i_swap) = i_save
             enddo
 
-            ! Randomely choose one "ibp" that will be deleted, depending on the energies
+            ! Randomly choose one "ibp" that will be deleted, depending on the energies
             ibp_delete = bp_seq(1)
             do i = 2, nbp_seq
                jbp = bp_seq(i)
 
                ratio = exp( (ene_bp(jbp, irep) - ene_bp(ibp_delete, irep)) * beta )
-               !rnd = genrand64_real1()  ! [0,1]-real-interval
                rnd = genrand_double1(mts(irep))  ! [0,1]-real-interval
 
                if (rnd < ratio) then
@@ -178,14 +193,51 @@ subroutine energy_bp_limit_triplet(irep, tempK_in, Ebp)
 
          ! Delete
          bp_status(ibp_delete, irep) = .False.
-         !ene_bp(ibp_delete) = 0.0_PREC
-         !! This line is commented out because ene_bp has to be kept for CHECK_FORCE.
-         !! In normal run, ene_bp will never be refered when bp_status is False,
-         !! thus it does not have to be zero cleared.
+
+         ! Update reverse index: remove ibp_delete from both nucleotides' lists
+         imp_del = bp_mp(1, ibp_delete, irep)
+         jmp_del = bp_mp(2, ibp_delete, irep)
+
+         do k = 1, nt_bp_count(imp_del)
+            if (nt_bp_idx(k, imp_del) == ibp_delete) then
+               nt_bp_idx(k, imp_del) = nt_bp_idx(nt_bp_count(imp_del), imp_del)
+               nt_bp_count(imp_del) = nt_bp_count(imp_del) - 1
+               exit
+            endif
+         enddo
+         do k = 1, nt_bp_count(jmp_del)
+            if (nt_bp_idx(k, jmp_del) == ibp_delete) then
+               nt_bp_idx(k, jmp_del) = nt_bp_idx(nt_bp_count(jmp_del), jmp_del)
+               nt_bp_count(jmp_del) = nt_bp_count(jmp_del) - 1
+               exit
+            endif
+         enddo
 
          ! Update nt_bp_excess
-         nt_bp_excess(bp_mp(1, ibp_delete, irep)) = nt_bp_excess(bp_mp(1, ibp_delete, irep)) - 1
-         nt_bp_excess(bp_mp(2, ibp_delete, irep)) = nt_bp_excess(bp_mp(2, ibp_delete, irep)) - 1
+         nt_bp_excess(imp_del) = nt_bp_excess(imp_del) - 1
+         nt_bp_excess(jmp_del) = nt_bp_excess(jmp_del) - 1
+
+         ! Incrementally update ntlist_excess (shift-remove to preserve sorted order)
+         if (nt_bp_excess(imp_del) == 0) then
+            pos = nt_excess_pos(imp_del)
+            do k = pos, nnt_bp_excess - 1
+               ntlist_excess(k) = ntlist_excess(k + 1)
+               nt_excess_pos(ntlist_excess(k)) = k
+            enddo
+            nt_excess_pos(imp_del) = 0
+            nnt_bp_excess = nnt_bp_excess - 1
+         endif
+         if (nt_bp_excess(jmp_del) == 0) then
+            pos = nt_excess_pos(jmp_del)
+            if (pos > 0) then
+               do k = pos, nnt_bp_excess - 1
+                  ntlist_excess(k) = ntlist_excess(k + 1)
+                  nt_excess_pos(ntlist_excess(k)) = k
+               enddo
+               nt_excess_pos(jmp_del) = 0
+               nnt_bp_excess = nnt_bp_excess - 1
+            endif
+         endif
 
       enddo
 
