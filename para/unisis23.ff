@@ -1,0 +1,177 @@
+title = "sis force field refined parameter 2"
+
+[potential]
+    [potential.bond]
+        k = 15.0
+        r0 = 6.13
+
+    [potential.angle_ReB]
+        k = 5.0
+        a0 = 2.6358
+
+    [potential.dihedral_exp]
+        k = 1.4
+        w = 3.0
+        phi0 = 0.267
+
+    [potential.basepair]
+        cutoff_energy = 0.001
+
+        dH0 = 0.0
+        dS0 = -17.0
+        coef_dG = 1.0
+
+        NNend = true
+        dHend0 = 0.0
+        dSend0 = 0.0
+
+        [potential.basepair.GC]
+        U0 = 1.0
+        bond_k = 1.26
+        bond_r = 15.06
+
+        angl_k1 = 7.12
+        angl_k2 = 7.04
+        angl_k3 = 6.35
+        angl_k4 = 9.23
+        angl_theta1 = 1.81
+        angl_theta2 = 1.82
+        angl_theta3 = 0.92
+        angl_theta4 = 0.92
+
+        dihd_k1 = 2.11
+        dihd_k2 = 2.31
+        dihd_phi1 = 1.96
+        dihd_phi2 = 1.15
+
+        [potential.basepair.AU]
+        U0 = 1.0
+        bond_k = 0.79
+        bond_r = 15.01
+
+        angl_k1 = 7.74
+        angl_k2 = 6.79
+        angl_k3 = 7.16
+        angl_k4 = 8.92
+        angl_theta1 = 1.81
+        angl_theta2 = 1.81
+        angl_theta3 = 0.93
+        angl_theta4 = 0.92
+
+        dihd_k1 = 2.61
+        dihd_k2 = 2.06
+        dihd_phi1 = 1.98
+        dihd_phi2 = 1.09
+
+        [potential.basepair.GU]
+        U0 = 1.0
+        bond_k = 0.9
+        bond_r = 14.85
+
+        angl_k1 = 12.12
+        angl_k2 = 3.37
+        angl_k3 = 6.54
+        angl_k4 = 16.87
+        angl_theta1 = 1.86
+        angl_theta2 = 1.77
+        angl_theta3 = 0.96
+        angl_theta4 = 0.94
+
+        dihd_k1 = 2.12
+        dihd_k2 = 1.99
+        dihd_phi1 = 1.89
+        dihd_phi2 = 1.16
+
+    [potential.wca]
+        sigma = 10.0
+        epsilon = 2.0
+
+[NN]
+    # Nearest neighbor parameters taken from
+    # J Zuber, S.J. Schroeder, H. Sun, D.H. Turner, and D.H. Mathews (2022) Nucl. Acids Res. 50, 5251-5262
+    #
+    # NN format XY_WZ indicates that one strand is 5'-XY-3' and the other is 3'-WZ-5'.
+    #
+    [NN.dG]
+        GC_CG  =  -3.46
+        CC_GG  =  -3.28
+        GA_CU  =  -2.42
+        CG_GC  =  -2.33
+        AC_UG  =  -2.25
+        CA_GU  =  -2.07
+        AG_UC  =  -2.01
+        UA_AU  =  -1.29
+        AU_UA  =  -1.09
+        AA_UU  =  -0.94
+        GC_UG  =  -2.23
+        CU_GG  =  -1.93
+        GG_CU  =  -1.80
+        CG_GU  =  -1.05
+        AU_UG  =  -0.76
+        GA_UU  =  -0.60
+        UG_GU  =  -0.38
+        UA_GU  =  -0.22
+        GG_UU  =  -0.20
+        GU_UG  =  -0.19
+        AG_UU  =   0.02
+    [NN.dH]
+        GC_CG  =  -16.52
+        CC_GG  =  -13.94
+        GA_CU  =  -13.75
+        CG_GC  =   -9.61
+        AC_UG  =  -11.98
+        CA_GU  =  -10.47
+        AG_UC  =   -9.34
+        UA_AU  =   -9.16
+        AU_UA  =   -8.91
+        AA_UU  =   -7.44
+        GC_UG  =  -14.73
+        CU_GG  =   -9.26
+        GG_CU  =  -12.41
+        CG_GU  =   -5.64
+        AU_UG  =   -9.23
+        GA_UU  =  -10.58
+        UG_GU  =   -8.76
+        UA_GU  =   -2.72
+        GG_UU  =   -9.06
+        GU_UG  =   -7.66
+        AG_UU  =   -5.10
+    [NN.dS]
+        GC_CG  =  -42.13
+        CC_GG  =  -34.41
+        GA_CU  =  -36.53
+        CG_GC  =  -23.46
+        AC_UG  =  -31.37
+        CA_GU  =  -27.08
+        AG_UC  =  -23.66
+        UA_AU  =  -25.40
+        AU_UA  =  -25.22
+        AA_UU  =  -20.98
+        GC_UG  =  -40.32
+        CU_GG  =  -23.64
+        GG_CU  =  -34.23
+        CG_GU  =  -14.83
+        AU_UG  =  -27.32
+        GA_UU  =  -32.19
+        UG_GU  =  -27.04
+        UA_GU  =   -8.08
+        GG_UU  =  -28.57
+        GU_UG  =  -24.11
+        AG_UU  =  -16.53
+
+[NNend]
+    [NNend.dH]
+        AUonAU =  4.36
+        AUonCG =  3.17
+        AUonGU =  5.16
+        GUonCG =  3.91
+        GUonAU =  3.65
+        GUonGU =  6.23
+    [NNend.dS]
+        AUonAU = 13.35
+        AUonCG =  8.79
+        AUonGU = 18.96
+        GUonCG = 12.17
+        GUonAU = 12.78
+        GUonGU = 22.47
+
