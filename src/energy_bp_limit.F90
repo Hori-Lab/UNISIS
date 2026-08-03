@@ -1,6 +1,6 @@
 subroutine energy_bp_limit(irep, Ebp)
 
-   use mt_stream, only : genrand_double1, genrand_double3
+   use mt_stream, only : genrand_double3
    use const, only : PREC
    use pbc, only : pbc_vec_d
    use var_top, only : nmp
@@ -12,15 +12,15 @@ subroutine energy_bp_limit(irep, Ebp)
    integer, intent(in) :: irep
    real(PREC), intent(inout) :: Ebp
 
-   integer :: i, ibp, jbp
+   integer :: i, ibp
    integer :: nt_delete, ibp_delete
    integer :: imp, jmp
-   integer :: i_save, i_swap
    type(basepair_parameters) :: bpp
-   real(PREC) :: u, beta, ratio
+   real(PREC) :: u, beta
    real(PREC) :: d, theta, phi
    real(PREC) :: ene
    real(PREC) :: rnd
+   real(PREC) :: Z, cum
    integer :: nbp_seq
    integer :: bp_seq(nbp(irep))
    integer :: nnt_bp_excess
@@ -114,27 +114,21 @@ subroutine energy_bp_limit(irep, Ebp)
             endif
          enddo
 
-         ! Shuffle
+         ! Compute Boltzmann-weighted deletion probabilities
+         Z = 0.0_PREC
          do i = 1, nbp_seq
-            !rnd = genrand64_real3()   ! (0,1)-real-interval
-            rnd = genrand_double3(mts(irep))  ! (0,1)-real-interval
-            i_swap = ceiling(rnd*nbp_seq)
-            i_save = bp_seq(i)
-            bp_seq(i) = bp_seq(i_swap)
-            bp_seq(i_swap) = i_save
+            Z = Z + exp(-ene_bp(bp_seq(i), irep) * beta)
          enddo
 
-         ! Randomely choose one "ibp" that will be deleted, depending on the energies
-         ibp_delete = bp_seq(1)
-         do i = 2, nbp_seq
-            jbp = bp_seq(i)
-
-            ratio = exp( (ene_bp(jbp, irep) - ene_bp(ibp_delete, irep)) * beta )
-            !rnd = genrand64_real1()
-            rnd = genrand_double1(mts(irep))  ! [0,1]-real-interval
-
-            if (rnd < ratio) then
-               ibp_delete = jbp
+         ! Select BP to delete: probability of deleting i is (1 - boltz_i/Z) / (N-1)
+         rnd = genrand_double3(mts(irep))   ! (0,1)-real-interval
+         cum = 0.0_PREC
+         ibp_delete = bp_seq(nbp_seq)   ! fallback for numerical rounding
+         do i = 1, nbp_seq
+            cum = cum + (1.0_PREC - exp(-ene_bp(bp_seq(i), irep) * beta) / Z) / real(nbp_seq - 1, PREC)
+            if (rnd < cum) then
+               ibp_delete = bp_seq(i)
+               exit
             endif
          enddo
 

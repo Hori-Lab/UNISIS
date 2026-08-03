@@ -1,6 +1,6 @@
 subroutine energy_bp_limit_triplet(irep, tempK_in, Ebp)
 
-   use mt_stream, only : genrand_double1, genrand_double3
+   use mt_stream, only : genrand_double3
    use const, only : PREC
    use const_phys, only : BOLTZ_KCAL_MOL
    use pbc, only : pbc_vec_d
@@ -20,10 +20,9 @@ subroutine energy_bp_limit_triplet(irep, tempK_in, Ebp)
    integer :: nt_delete, ibp_delete
    integer :: imp1, imp2, imp3, imp4, imp5, imp6
    integer :: imp, jmp
-   integer :: i_save, i_swap
    type(basepair_parameters) :: bpp
    real(PREC) :: tK, dG
-   real(PREC) :: u, beta, ratio
+   real(PREC) :: u, beta
    real(PREC) :: d, theta, phi
    real(PREC) :: rnd
    integer :: nt_bp_excess(nmp)
@@ -37,6 +36,7 @@ subroutine energy_bp_limit_triplet(irep, tempK_in, Ebp)
    integer :: nt_bp_idx(MAX_BP_DEGREE, nmp)
    integer :: nt_excess_pos(nmp)
    integer :: imp_del, jmp_del, pos, k
+   real(PREC) :: Z, cum, boltz(MAX_BP_DEGREE)
 
 
    if (.not. flg_bp_energy) then
@@ -160,25 +160,22 @@ subroutine energy_bp_limit_triplet(irep, tempK_in, Ebp)
          bp_seq(1:nbp_seq) = nt_bp_idx(1:nbp_seq, nt_delete)
 
          if (temp_independent == 0) then
-            ! Shuffle
+            ! Compute Boltzmann-weighted deletion probabilities
+            Z = 0.0_PREC
             do i = 1, nbp_seq
-               rnd = genrand_double3(mts(irep))   ! (0,1)-real-interval
-               i_swap = ceiling(rnd*nbp_seq)
-               i_save = bp_seq(i)
-               bp_seq(i) = bp_seq(i_swap)
-               bp_seq(i_swap) = i_save
+               boltz(i) = exp(-ene_bp(bp_seq(i), irep) * beta)
+               Z = Z + boltz(i)
             enddo
 
-            ! Randomly choose one "ibp" that will be deleted, depending on the energies
-            ibp_delete = bp_seq(1)
-            do i = 2, nbp_seq
-               jbp = bp_seq(i)
-
-               ratio = exp( (ene_bp(jbp, irep) - ene_bp(ibp_delete, irep)) * beta )
-               rnd = genrand_double1(mts(irep))  ! [0,1]-real-interval
-
-               if (rnd < ratio) then
-                  ibp_delete = jbp
+            ! Select BP to delete: probability of deleting i is (1 - boltz_i/Z) / (N-1)
+            rnd = genrand_double3(mts(irep))   ! (0,1)-real-interval
+            cum = 0.0_PREC
+            ibp_delete = bp_seq(nbp_seq)   ! fallback for numerical rounding
+            do i = 1, nbp_seq
+               cum = cum + (1.0_PREC - boltz(i) / Z) / real(nbp_seq - 1, PREC)
+               if (rnd < cum) then
+                  ibp_delete = bp_seq(i)
+                  exit
                endif
             enddo
 
