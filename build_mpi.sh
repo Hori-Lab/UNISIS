@@ -18,7 +18,7 @@ if [[ ${hostnameall:(-14):(-1)} == 'archer2.ac.uk' ]]; then
 elif [[ ${hostname:8:9} == 'sulis.hpc' ]]; then
     FC=mpiifort cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_MPI=ON
 elif [[ ${hostname:(-20)} == 'ada.nottingham.ac.uk' ]]; then
-    FC=ifort cmake .. -DCMAKE_BUILD_TYPE=Release
+    FC=mpiifort cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_MPI=ON
 elif [[ ${hostname:13:24} == 'augusta.nottingham.ac.uk' ]]; then
     #FC=ifort cmake .. -DCMAKE_BUILD_TYPE=Release
     echo 'Edit build_mpi.sh!'
