@@ -213,11 +213,11 @@ contains
       git = githash()
 
       print '(a)', '############ Program information ############'
-      print '(a)', 'SIS model simulation code'
+      print '(a)', 'UNISIS model simulation program'
       print '(a)', 'Authors: N. Hori, H.T. Vu, J.A. Robins'
-      print '(a)', 'Source: https://github.com/Hori-Lab/SIS'
+      print '(a)', 'Source: https://github.com/Hori-Lab/UNISIS'
       if (git(1:1) == '?') then
-         print '(a)', 'Version: 2024.08'
+         print '(a)', 'Version: 2026.08'
       else
          print '(2a)', 'Git commit: ', git
       endif
