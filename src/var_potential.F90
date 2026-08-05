@@ -45,7 +45,10 @@ module var_potential
    integer, allocatable :: bp_map(:,:)
    integer, allocatable :: bp3_map(:,:)
    !real(PREC), allocatable :: bp_map_dG(:,:,:)   ! (nmp, nmp, nrep_proc)
-   real(PREC) :: bp_cutoff_energy  ! 0.01 kcal/mol
+   real(PREC) :: bp_cutoff_energy  ! Negative value in kcal/mol, e.g. -0.001.
+                                   ! In the MC procedure, a base pair is
+                                   ! regarded as formed only when its energy is below this value.
+                                   ! The sign is normalised to be negative in init_bp.
    real(PREC) :: bp_cutoff_dist
    integer,    save :: bp_seqdep
       ! = 0 (Default): No sequence dependence. Only U0_GC, U0_AU, U0_GU are required.

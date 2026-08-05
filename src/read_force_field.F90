@@ -141,7 +141,7 @@ subroutine read_force_field()
       endif
 
       call get_value(group, "basepair", node)
-      bp_cutoff_energy = 0.001_PREC  ! Default /kcal/mol
+      bp_cutoff_energy = -0.001_PREC  ! Default /kcal/mol
       coef_dG = 1.0_PREC
       dH0 = 0.0_PREC
       dS0 = 0.0_PREC

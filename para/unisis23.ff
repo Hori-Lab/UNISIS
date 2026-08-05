@@ -15,7 +15,7 @@ title = "sis force field refined parameter 2"
         phi0 = 0.267
 
     [potential.basepair]
-        cutoff_energy = 0.001
+        cutoff_energy = -0.001
 
         dH0 = 0.0
         dS0 = -17.0
