@@ -1,6 +1,6 @@
 set(BUILD_SHARED_LIBS OFF)
 
-add_subdirectory("toml-f")
+add_subdirectory("toml-f" EXCLUDE_FROM_ALL)
 add_subdirectory("mt_stream_f90-1.11")
 
 list(

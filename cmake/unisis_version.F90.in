@@ -1,0 +1,8 @@
+module unisis_version
+
+   implicit none
+
+   character(len=*), parameter :: UNISIS_RELEASE_LABEL = "@UNISIS_RELEASE_LABEL@"
+   character(len=*), parameter :: UNISIS_PROJECT_VERSION = "@PROJECT_VERSION@"
+
+end module unisis_version

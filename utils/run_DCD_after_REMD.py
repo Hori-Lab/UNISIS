@@ -10,7 +10,7 @@ path_to_toml = '../input_REMD.toml'
 out_dir = './'
 relative_dir = './'
 path_to_dcd = '../label001/'
-path_to_sis = '../../sis/sis'
+path_to_sis = '../../unisis/unisis'
 
 remd_toml = toml.load(path_to_toml)
 

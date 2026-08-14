@@ -11,14 +11,14 @@ From the repository root:
 ./test/run_tests.py
 
 # Smoke test: check that the code compiles and runs
-./test/run_tests.py --levels run --modes serial --serial-exe ./build/sis
+./test/run_tests.py --levels run --modes serial --serial-exe ./build/bin/unisis
 
 # Regression test against stored reference data
-./test/run_tests.py --levels regression --modes serial --serial-exe ./build/sis
+./test/run_tests.py --levels regression --modes serial --serial-exe ./build/bin/unisis
 
 # Multiple levels and modes at once
 ./test/run_tests.py --levels run,consistency,regression --modes serial,omp1,ompN \
-    --serial-exe ./build/sis --omp-exe ./build/sis
+    --serial-exe ./build/bin/unisis --omp-exe ./build/bin/unisis
 ```
 
 ## Concepts
@@ -49,7 +49,7 @@ Three separate builds are required:
 |-------|-----------|-------------|
 | serial | `build_serial/` | `-DCMAKE_DISABLE_FIND_PACKAGE_OpenMP=TRUE` |
 | omp | `build/` | (default) |
-| mpi | `build_mpi/` | `-DBUILD_MPI=ON` |
+| mpi | `build_mpi/` | `-DUNISIS_BUILD_SERIAL=OFF -DUNISIS_BUILD_MPI=ON` |
 
 You can either let the framework build them (`--build`, the default) or provide pre-built executables via `--serial-exe`, `--omp-exe`, `--mpi-exe`.
 
@@ -87,9 +87,9 @@ With no arguments, prints info and usage examples.
 | `--cases NAMES` | `all` | Comma-separated case names or `all` |
 | `--modes MODES` | `all` | Comma-separated modes or `all` |
 | `--levels LEVELS` | `run` | Comma-separated levels or `all` |
-| `--serial-exe PATH` | | Path to serial-compiled `sis` |
-| `--omp-exe PATH` | | Path to OpenMP-compiled `sis` |
-| `--mpi-exe PATH` | | Path to MPI-compiled `sis` |
+| `--serial-exe PATH` | | Path to serial-compiled `unisis` |
+| `--omp-exe PATH` | | Path to OpenMP-compiled `unisis` |
+| `--mpi-exe PATH` | | Path to MPI-compiled `unisis_mpi` |
 | `--build` | yes | Build executables if not found |
 | `--no-build` | | Do not build; fail if missing |
 | `--omp-threads N` | 4 | Thread count for ompN/mpi_omp |
@@ -113,21 +113,21 @@ On the Pharmacy HPC cluster, you can offload simulation jobs to cluster nodes in
 
 ```bash
 # Smoke test via HTCondor (serial mode, 1 CPU, 4 GB)
-./test/run_tests.py --levels run --modes serial --serial-exe ./build/sis --condor
+./test/run_tests.py --levels run --modes serial --serial-exe ./build/bin/unisis --condor
 
 # Regression test via HTCondor with more memory
-./test/run_tests.py --levels regression --modes serial --serial-exe ./build/sis \
+./test/run_tests.py --levels regression --modes serial --serial-exe ./build/bin/unisis \
     --condor --condor-memory 8
 
 # Multiple modes in parallel — all jobs submitted at once
 ./test/run_tests.py --levels run,regression --modes serial,omp1,ompN \
-    --serial-exe ./build/sis --omp-exe ./build/sis --condor
+    --serial-exe ./build/bin/unisis --omp-exe ./build/bin/unisis --condor
 
 # MPI test (4 CPUs requested on a single node)
-./test/run_tests.py --levels run --modes mpi --mpi-exe ./build/sis_mpi --condor
+./test/run_tests.py --levels run --modes mpi --mpi-exe ./build/bin/unisis_mpi --condor
 
 # Restart test (sequential HTCondor stages)
-./test/run_tests.py --levels restart --cases md_simple --serial-exe ./build/sis --condor
+./test/run_tests.py --levels restart --cases md_simple --serial-exe ./build/bin/unisis --condor
 ```
 
 ### Submit-only / collect workflow
@@ -137,14 +137,14 @@ When the cluster is busy, jobs can sit in the queue for a long time. Instead of 
 ```bash
 # Step 1: submit all jobs and exit immediately
 ./test/run_tests.py --condor-submit-only --levels run,regression --modes serial,ompN \
-    --serial-exe ./build/sis --omp-exe ./build/sis
+    --serial-exe ./build/bin/unisis --omp-exe ./build/bin/unisis
 
 # Check job status any time
 condor_q
 
 # Step 2: collect results (auto-detects completed jobs from manifest)
 ./test/run_tests.py --condor --levels run,regression --modes serial,ompN \
-    --serial-exe ./build/sis --omp-exe ./build/sis
+    --serial-exe ./build/bin/unisis --omp-exe ./build/bin/unisis
 ```
 
 The `--condor-submit-only` flag writes a manifest file (`_work/_condor_manifest.json`) recording all submitted jobs. When you later run with `--condor`, the framework detects the manifest and:
@@ -218,7 +218,7 @@ By default, regression tests compare against the **latest** reference set accord
 After confirming the code produces correct results (e.g., by independent validation or comparison with a previous trusted version):
 
 ```bash
-./test/run_tests.py --generate-reference --serial-exe ./build/sis
+./test/run_tests.py --generate-reference --serial-exe ./build/bin/unisis
 ```
 
 This creates a new reference set labeled `YYYY-MM-DD_<commit>` (e.g., `2026-01-01_abc1234`) with a `summary.json` recording the date, git commit, machine name, and platform.
@@ -234,36 +234,36 @@ The reference directory for each case contains:
 To add a description:
 
 ```bash
-./test/run_tests.py --generate-reference --ref-description "after fixing electrostatics bug" --serial-exe ./build/sis
+./test/run_tests.py --generate-reference --ref-description "after fixing electrostatics bug" --serial-exe ./build/bin/unisis
 ```
 
 To regenerate for a specific case only:
 
 ```bash
-./test/run_tests.py --generate-reference --cases md_simple --serial-exe ./build/sis
+./test/run_tests.py --generate-reference --cases md_simple --serial-exe ./build/bin/unisis
 ```
 
 Reference generation also supports HTCondor dispatch:
 
 ```bash
 # Submit reference runs to HTCondor and wait for results
-./test/run_tests.py --generate-reference --condor --serial-exe ./build/sis
+./test/run_tests.py --generate-reference --condor --serial-exe ./build/bin/unisis
 
 # Or use the two-step submit-only / collect workflow
-./test/run_tests.py --generate-reference --condor-submit-only --serial-exe ./build/sis
+./test/run_tests.py --generate-reference --condor-submit-only --serial-exe ./build/bin/unisis
 condor_q  # check progress
-./test/run_tests.py --generate-reference --condor --serial-exe ./build/sis
+./test/run_tests.py --generate-reference --condor --serial-exe ./build/bin/unisis
 ```
 
 ### Selecting a reference set for regression
 
 ```bash
 # Use the latest reference set (default)
-./test/run_tests.py --levels regression --serial-exe ./build/sis
+./test/run_tests.py --levels regression --serial-exe ./build/bin/unisis
 
 # Use a specific reference set
-./test/run_tests.py --levels regression --reference initial --serial-exe ./build/sis
-./test/run_tests.py --levels regression --reference 2026-01-01_abc1234 --serial-exe ./build/sis
+./test/run_tests.py --levels regression --reference initial --serial-exe ./build/bin/unisis
+./test/run_tests.py --levels regression --reference 2026-01-01_abc1234 --serial-exe ./build/bin/unisis
 ```
 
 Run with no arguments to see all available reference sets.
@@ -284,7 +284,7 @@ Old reference sets are preserved so you can compare against any historical basel
 
 1. Run the regression test to confirm it fails and understand the magnitude of change.
 2. Verify the new results are correct (analytical check, comparison with independent code, etc.).
-3. Generate a new reference set: `./test/run_tests.py --generate-reference --cases <case> --serial-exe ./build/sis` (each case uses its `reference_mode`)
+3. Generate a new reference set: `./test/run_tests.py --generate-reference --cases <case> --serial-exe ./build/bin/unisis` (each case uses its `reference_mode`)
 4. Run the regression test again to confirm it passes.
 5. Commit the new reference set with a message explaining why it was generated.
 
@@ -352,23 +352,23 @@ For REMD tests, also set:
 ### Step 3: Verify the test runs
 
 ```bash
-./test/run_tests.py --levels run --cases my_new_test --modes serial --serial-exe ./build/sis
+./test/run_tests.py --levels run --cases my_new_test --modes serial --serial-exe ./build/bin/unisis
 ```
 
 ### Step 4: Generate reference data
 
 ```bash
 # Uses the mode specified by reference_mode in config
-./test/run_tests.py --generate-reference --cases my_new_test --serial-exe ./build/sis
+./test/run_tests.py --generate-reference --cases my_new_test --serial-exe ./build/bin/unisis
 
 # Or via HTCondor
-./test/run_tests.py --generate-reference --cases my_new_test --condor --serial-exe ./build/sis
+./test/run_tests.py --generate-reference --cases my_new_test --condor --serial-exe ./build/bin/unisis
 ```
 
 ### Step 5: Verify regression passes
 
 ```bash
-./test/run_tests.py --levels regression --cases my_new_test --serial-exe ./build/sis
+./test/run_tests.py --levels regression --cases my_new_test --serial-exe ./build/bin/unisis
 ```
 
 ### Step 6: Commit

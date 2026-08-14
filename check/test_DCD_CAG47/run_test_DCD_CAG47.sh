@@ -16,7 +16,7 @@ cmake -DCMAKE_BUILD_TYPE=Debug -DCMAKE_Fortran_FLAGS="-O0 -g -fbacktrace -ffpe-t
 make -j12
 cd ..
 
-./build/sis ./input_DCD_CAG47.toml 1> sis.out 2> sis.err
-./build_HTN/sis ./input_DCD_CAG47_HTN.toml 1> sis_HTN.out 2> sis_HTN.err
+./build/bin/unisis ./input_DCD_CAG47.toml 1> sis.out 2> sis.err
+./build_HTN/bin/unisis ./input_DCD_CAG47_HTN.toml 1> sis_HTN.out 2> sis_HTN.err
 
 gnuplot compare_DCD_CAG47.gnu

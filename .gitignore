@@ -1,9 +1,10 @@
 *.o
 *.mod
 build/
+build-install/
 build_mpi/
 build_serial/
-sis
-sis.mpi
+/unisis
+/unisis_mpi
 .DS_Store
 __pycache__

@@ -21,7 +21,7 @@ Usage examples:
     ./test/run_tests.sh --generate-reference --modes serial
 
     # Pre-built executables
-    ./test/run_tests.sh --serial-exe ./build/sis --omp-exe ./build/sis
+    ./test/run_tests.sh --serial-exe ./build/bin/unisis --omp-exe ./build/bin/unisis
 """
 
 import argparse
@@ -63,9 +63,9 @@ def parse_args():
     )
 
     # Executable paths
-    parser.add_argument("--serial-exe", help="Path to serial-compiled sis")
-    parser.add_argument("--omp-exe", help="Path to OpenMP-compiled sis")
-    parser.add_argument("--mpi-exe", help="Path to MPI-compiled sis")
+    parser.add_argument("--serial-exe", help="Path to serial-compiled unisis")
+    parser.add_argument("--omp-exe", help="Path to OpenMP-compiled unisis")
+    parser.add_argument("--mpi-exe", help="Path to MPI-compiled unisis_mpi")
 
     # Build control
     build_group = parser.add_mutually_exclusive_group()
@@ -194,13 +194,13 @@ def print_info():
 
     print()
     print("Usage examples:")
-    print("  ./test/run_tests.py --levels run --modes serial --serial-exe ./build/sis")
-    print("  ./test/run_tests.py --levels run,consistency --modes serial,omp1,ompN --omp-exe ./build/sis")
-    print("  ./test/run_tests.py --levels regression --cases md_simple --serial-exe ./build/sis")
-    print("  ./test/run_tests.py --levels restart --cases md_simple --serial-exe ./build/sis")
-    print("  ./test/run_tests.py --generate-reference --serial-exe ./build/sis")
-    print("  ./test/run_tests.py --generate-reference --ref-description 'after bugfix #42' --serial-exe ./build/sis")
-    print("  ./test/run_tests.py --levels regression --reference 2026-03-28_abc1234 --serial-exe ./build/sis")
+    print("  ./test/run_tests.py --levels run --modes serial --serial-exe ./build/bin/unisis")
+    print("  ./test/run_tests.py --levels run,consistency --modes serial,omp1,ompN --omp-exe ./build/bin/unisis")
+    print("  ./test/run_tests.py --levels regression --cases md_simple --serial-exe ./build/bin/unisis")
+    print("  ./test/run_tests.py --levels restart --cases md_simple --serial-exe ./build/bin/unisis")
+    print("  ./test/run_tests.py --generate-reference --serial-exe ./build/bin/unisis")
+    print("  ./test/run_tests.py --generate-reference --ref-description 'after bugfix #42' --serial-exe ./build/bin/unisis")
+    print("  ./test/run_tests.py --levels regression --reference 2026-03-28_abc1234 --serial-exe ./build/bin/unisis")
     print("  ./test/run_tests.py --levels all --modes all --build")
     print()
     print("Run with --help for full option list.")

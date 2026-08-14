@@ -1,4 +1,4 @@
-program sis
+program unisis
 
    use, intrinsic :: iso_fortran_env, only : iostat_end, compiler_version, compiler_options, output_unit
    use const, only : CHAR_FILE_PATH, init_const, PREC, FILENAME_DIGIT_REPLICA
@@ -12,6 +12,7 @@ program sis
    use var_parallel, only : init_parallel, end_parallel
    use var_replica, only : nrep_proc, flg_replica
    use pbc, only : flg_pbc, init_pbc
+   use unisis_version, only : UNISIS_RELEASE_LABEL
    !use mt19937_64, only : init_genrand64
 
    implicit none
@@ -26,15 +27,22 @@ program sis
    logical :: stat
 
    call init_const()
-   
+
+   nargs = command_argument_count()
+   if (nargs == 1) then
+      call get_command_argument(1, carg)
+      if (trim(carg) == '--version') then
+         call print_version()
+         stop
+      endif
+   endif
+
    call init_parallel()
 
    call print_program_info()
 
-   nargs = command_argument_count()
-
    if (nargs < 1 .or. 3 < nargs) then
-      print *, 'Usage: PROGRAM input.toml [restart file (.rst)] [--reset-step]'
+      call print_usage()
       stop
    endif
 
@@ -45,7 +53,7 @@ program sis
       if (trim(carg) == '--reset-step') then
          reset_step = .True.
       else
-         print *, 'Usage: PROGRAM input.toml [restart file (.rst)] [--reset-step]'
+         call print_usage()
          stop
       endif
    endif
@@ -194,6 +202,26 @@ program sis
 
 contains
 
+   subroutine print_usage()
+
+#ifdef PAR_MPI
+      print *, 'Usage: unisis_mpi input.toml [restart file (.rst)] [--reset-step]'
+#else
+      print *, 'Usage: unisis input.toml [restart file (.rst)] [--reset-step]'
+#endif
+
+   end subroutine print_usage
+
+   subroutine print_version()
+
+#ifdef PAR_MPI
+      print '(3a)', 'UNISIS ', UNISIS_RELEASE_LABEL, ' (MPI)'
+#else
+      print '(3a)', 'UNISIS ', UNISIS_RELEASE_LABEL, ' (serial)'
+#endif
+
+   end subroutine print_version
+
    subroutine print_program_info()
 
       use var_parallel, only : nprocs, nthreads, ncores
@@ -216,8 +244,14 @@ contains
       print '(a)', 'UNISIS model simulation program'
       print '(a)', 'Authors: N. Hori, H.T. Vu, J.A. Robins'
       print '(a)', 'Source: https://github.com/Hori-Lab/UNISIS'
+      print '(2a)', 'UNISIS version: ', UNISIS_RELEASE_LABEL
+#ifdef PAR_MPI
+      print '(a)', 'Build variant: MPI'
+#else
+      print '(a)', 'Build variant: serial'
+#endif
       if (git(1:1) == '?') then
-         print '(a)', 'Version: 2026.08'
+         continue
       else
          print '(2a)', 'Git commit: ', git
       endif
@@ -238,4 +272,4 @@ contains
 
    end subroutine print_program_info
 
-end program sis
+end program unisis

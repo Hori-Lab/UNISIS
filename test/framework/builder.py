@@ -7,9 +7,9 @@ from .utils import run_command, ensure_dir
 
 # Maps build variant to (directory_name, cmake_extra_flags)
 BUILD_VARIANTS = {
-    "serial": ("build_serial", ["-DCMAKE_DISABLE_FIND_PACKAGE_OpenMP=TRUE"]),
+    "serial": ("build_serial", ["-DUNISIS_BUILD_SERIAL=ON", "-DUNISIS_BUILD_MPI=OFF", "-DCMAKE_DISABLE_FIND_PACKAGE_OpenMP=TRUE"]),
     "omp": ("build", []),
-    "mpi": ("build_mpi", ["-DBUILD_MPI=ON"]),
+    "mpi": ("build_mpi", ["-DUNISIS_BUILD_SERIAL=OFF", "-DUNISIS_BUILD_MPI=ON"]),
 }
 
 # Maps parallelization mode to build variant
@@ -52,7 +52,8 @@ class BuildManager:
             return False
         # Check if executable already exists from a previous build
         dir_name = BUILD_VARIANTS[variant][0]
-        exe_path = os.path.join(self.repo_root, dir_name, "sis")
+        exe_name = "unisis_mpi" if variant == "mpi" else "unisis"
+        exe_path = os.path.join(self.repo_root, dir_name, "bin", exe_name)
         if os.path.isfile(exe_path):
             self.executables[variant] = exe_path
             return False
@@ -98,7 +99,8 @@ class BuildManager:
                 msg += f"\nstdout:\n{stdout}"
             raise RuntimeError(msg)
 
-        exe_path = os.path.join(build_dir, "sis")
+        exe_name = "unisis_mpi" if variant == "mpi" else "unisis"
+        exe_path = os.path.join(build_dir, "bin", exe_name)
         if not os.path.isfile(exe_path):
             raise RuntimeError(f"Build succeeded but executable not found: {exe_path}")
 
@@ -122,7 +124,8 @@ class BuildManager:
         # Check if already built on disk
         for variant in list(variants_needed):
             dir_name = BUILD_VARIANTS[variant][0]
-            exe_path = os.path.join(self.repo_root, dir_name, "sis")
+            exe_name = "unisis_mpi" if variant == "mpi" else "unisis"
+            exe_path = os.path.join(self.repo_root, dir_name, "bin", exe_name)
             if os.path.isfile(exe_path):
                 self.executables[variant] = exe_path
                 variants_needed.discard(variant)

@@ -1,20 +1,7 @@
-set(SIS_EXE sis)
-
 option(BP_HALT_IEEE_EXCEPTIONS "Use ieee halting mode functions in write_bp" OFF)
-if (BP_HALT_IEEE_EXCEPTIONS)
-    set(CMAKE_Fortran_FLAGS_DEBUG   "${CMAKE_Fortran_FLAGS_DEBUG} -DBP_HALT_IEEE_EXCEPTIONS")
-    set(CMAKE_Fortran_FLAGS_RELEASE   "${CMAKE_Fortran_FLAGS_RELEASE} -DBP_HALT_IEEE_EXCEPTIONS")
-    set(CMAKE_Fortran_FLAGS_RELWITHDEBINFO   "${CMAKE_Fortran_FLAGS_RELWITHDEBINFO} -DBP_HALT_IEEE_EXCEPTIONS")
-endif (BP_HALT_IEEE_EXCEPTIONS)
-
 option(ALLOW_ARGUMENT_MISMATCH "Use -fallow-argument-mismatch option" OFF)
-if (ALLOW_ARGUMENT_MISMATCH)
-    set(CMAKE_Fortran_FLAGS_DEBUG   "${CMAKE_Fortran_FLAGS_DEBUG} -fallow-argument-mismatch")
-    set(CMAKE_Fortran_FLAGS_RELEASE   "${CMAKE_Fortran_FLAGS_RELEASE} -fallow-argument-mismatch")
-    set(CMAKE_Fortran_FLAGS_RELWITHDEBINFO   "${CMAKE_Fortran_FLAGS_RELWITHDEBINFO} -fallow-argument-mismatch")
-endif (ALLOW_ARGUMENT_MISMATCH)
 
-add_executable(${SIS_EXE}
+set(UNISIS_COMMON_SOURCES
     const.F90 const_idx.F90 const_phys.F90
     rnd_boxmuller.F90
     dcd.F90
@@ -53,14 +40,56 @@ add_executable(${SIS_EXE}
     sis_abort.F90
     warning_stage.F90
     main.F90
+    ${CMAKE_BINARY_DIR}/generated/unisis_version.F90
 )
 
-add_dependencies(${SIS_EXE} toml-f-lib)
-add_dependencies(${SIS_EXE} mt_stream-lib)
+function(configure_unisis_target target_name output_name)
+    set_target_properties(${target_name} PROPERTIES
+        OUTPUT_NAME ${output_name}
+        Fortran_MODULE_DIRECTORY "${CMAKE_BINARY_DIR}/modules/${target_name}"
+    )
 
-target_link_libraries(${SIS_EXE} toml-f-lib) 
-target_link_libraries(${SIS_EXE} githash)
-target_link_libraries(${SIS_EXE} mt_stream-lib)
+    target_include_directories(${target_name} PRIVATE
+        "${CMAKE_BINARY_DIR}/generated"
+        "${CMAKE_BINARY_DIR}/modules/${target_name}"
+    )
+
+    if (BP_HALT_IEEE_EXCEPTIONS)
+        target_compile_definitions(${target_name} PRIVATE BP_HALT_IEEE_EXCEPTIONS)
+    endif()
+
+    if (ALLOW_ARGUMENT_MISMATCH)
+        target_compile_options(${target_name} PRIVATE -fallow-argument-mismatch)
+    endif()
+
+    if (DUMPFORCE)
+        target_compile_definitions(${target_name} PRIVATE DUMPFORCE)
+    endif()
+
+    if (OpenMP_Fortran_FOUND)
+        target_link_libraries(${target_name} PRIVATE OpenMP::OpenMP_Fortran)
+    endif()
+
+    target_link_libraries(${target_name} PRIVATE
+        toml-f-lib
+        githash
+        mt_stream-lib
+    )
+endfunction()
+
+if(UNISIS_BUILD_SERIAL)
+    add_executable(unisis_serial ${UNISIS_COMMON_SOURCES})
+    configure_unisis_target(unisis_serial unisis)
+    install(TARGETS unisis_serial RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+endif()
+
+if(UNISIS_BUILD_MPI)
+    add_executable(unisis_mpi ${UNISIS_COMMON_SOURCES})
+    configure_unisis_target(unisis_mpi unisis_mpi)
+    target_compile_definitions(unisis_mpi PRIVATE PAR_MPI)
+    target_link_libraries(unisis_mpi PRIVATE MPI::MPI_Fortran)
+    install(TARGETS unisis_mpi RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+endif()
 
 add_executable(show_rst
     const.F90 const_idx.F90
@@ -68,3 +97,6 @@ add_executable(show_rst
 )
 add_dependencies(show_rst mt_stream-lib)
 target_link_libraries(show_rst mt_stream-lib)
+set_target_properties(show_rst PROPERTIES
+    Fortran_MODULE_DIRECTORY "${CMAKE_BINARY_DIR}/modules/show_rst"
+)

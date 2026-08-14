@@ -13,4 +13,4 @@ fi
 suffix=`printf "%3.3d" $rank`
 echo $suffix
 
-../../sis.mpi input_REMD2.toml test1/test_REMD1.rst 1> ./out2.$suffix 2> ./err2.$suffix
+../../build/bin/unisis_mpi input_REMD2.toml test1/test_REMD1.rst 1> ./out2.$suffix 2> ./err2.$suffix
