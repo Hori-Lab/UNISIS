@@ -316,20 +316,20 @@ subroutine init_bp()
       bp3_map(:,:) = bp_map(:,:)
    endif
 
-   ! Normalise the sign of bp_cutoff_energy.
-   ! The base pair energy is always negative (U0 > 0 and dG < 0 for the NN models),
-   ! thus the threshold has to be negative for the test "u <= bp_cutoff_energy" to be effective.
-   ! A positive value would make every pair in the neighbour list "formed", regardless of its
-   ! geometry. Some old force-field files specify a positive value, so it is corrected here.
-   ! Note that this threshold is used only for the MC procedure.
-   if (bp_cutoff_energy > 0.0_PREC) then
-      if (myrank == 0) then
-         print '(a)', 'Warning: cutoff_energy in [potential.basepair] has to be negative since the base pair energy is negative.'
-         print '(a,g15.8,a,g15.8)', 'Warning: the sign is flipped, ', bp_cutoff_energy, ' ==> ', -bp_cutoff_energy
-         flush(output_unit)
-      endif
-      bp_cutoff_energy = -bp_cutoff_energy
-   endif
+   !! Normalise the sign of bp_cutoff_energy.
+   !! The base pair energy is always negative (U0 > 0 and dG < 0 for the NN models),
+   !! thus the threshold has to be negative for the test "u <= bp_cutoff_energy" to be effective.
+   !! A positive value would make every pair in the neighbour list "formed", regardless of its
+   !! geometry. Some old force-field files specify a positive value, so it is corrected here.
+   !! Note that this threshold is used only for the MC procedure.
+   !if (bp_cutoff_energy > 0.0_PREC) then
+   !   if (myrank == 0) then
+   !      print '(a)', 'Warning: cutoff_energy in [potential.basepair] has to be negative since the base pair energy is negative.'
+   !      print '(a,g15.8,a,g15.8)', 'Warning: the sign is flipped, ', bp_cutoff_energy, ' ==> ', -bp_cutoff_energy
+   !      flush(output_unit)
+   !   endif
+   !   bp_cutoff_energy = -bp_cutoff_energy
+   !endif
 
    ! Calcuate BP cutoff
    ! If bp_cutoff_energy is not specified in ff, the default value is 0.001 (kcal/mol).
