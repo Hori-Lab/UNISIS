@@ -175,9 +175,9 @@ nstep_check_stop = 10000
     # (optional, default: 10000) Frequency to check the wall time to stop. 
     # The value has to be a positive integer. If a value less than 1 is specified, 
     # then nstep_check_stop = 1 will be used (check evey step).
-    # The simulation can also be stopped by placing an empty file named STOP_SIS at the same directory
+    # The simulation can also be stopped by placing an empty file named STOP_UNISIS at the same directory
     # specified in [Files.In] prefix.
-    # e.g. if prefix = "./output/md", either ./output/stop_sis or ./output/STOP_SIS will terminate the job.
+    # e.g. if prefix = "./output/md", ./output/STOP_UNISIS will terminate the job.
 
 fix_com_origin = 0
     # (optional) Fix the translational motion of the molecule.
@@ -309,4 +309,3 @@ potential = 'harmonic'
 #potential = 'timed-flat-bottomed'
 k = 1.0
 Rg0 = 12.0
-

@@ -241,7 +241,7 @@ contains
       git = githash()
 
       print '(a)', '############ Program information ############'
-      print '(a)', 'UNISIS model simulation program'
+      print '(a)', 'UNISIS simulation program'
       print '(a)', 'Authors: N. Hori, H.T. Vu, J.A. Robins'
       print '(a)', 'Source: https://github.com/Hori-Lab/UNISIS'
       print '(2a)', 'UNISIS version: ', UNISIS_RELEASE_LABEL

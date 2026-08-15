@@ -76,7 +76,7 @@ subroutine job_md()
    endsubroutine set_ele
    endinterface
 
-   cfile_stop = trim(cfile_prefix(:index(cfile_prefix, '/', .True.))) // 'STOP_SIS'
+   cfile_stop = trim(cfile_prefix(:index(cfile_prefix, '/', .True.))) // 'STOP_UNISIS'
 
    allocate(mass(nmp))
    allocate(accels(3, nmp, nrep_proc))
@@ -671,7 +671,7 @@ subroutine job_md()
          enddo
 
          if (flg_stop_file) then
-            print '(a,i13,a)', 'STOP_SIS file was found at step ', istep, '. Stop the job.'
+            print '(a,i13,a)', 'STOP_UNISIS file was found at step ', istep, '. Stop the job.'
          else
             print '(a,i13,a)', 'Wall-clock time limit reached at step ', istep, '. Stop the job.'
          endif
